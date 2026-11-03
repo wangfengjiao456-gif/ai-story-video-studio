@@ -1,0 +1,6 @@
+{
+  "framework": "vite",
+  "buildCommand": "npm run build",
+  "outputDirectory": "dist",
+  "functions": { "api/elevenlabs.js": { "maxDuration": 60 } }
+}

@@ -969,3 +969,60 @@ input[type="range"] {
     margin: 16px 14px;
   }
 }
+
+.ai-voice-panel[hidden] {
+  display: none;
+}
+.voice-config {
+  display: grid;
+  gap: 10px;
+  font-size: 12px;
+  line-height: 1.8;
+  margin-bottom: 18px;
+}
+.voice-config code {
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+.ai-player {
+  background: #f4f7ef;
+  padding: 16px;
+  border-radius: 8px;
+  margin: 20px 0;
+  font-size: 12px;
+}
+.ai-player audio {
+  display: block;
+  width: 100%;
+  margin: 14px 0;
+  min-height: 44px;
+}
+.ai-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.ai-actions button {
+  min-height: 44px;
+}
+.clip-text {
+  font-size: 13px;
+  line-height: 1.9;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 130px;
+  overflow-y: auto;
+}
+.sync-label {
+  color: #6f805f;
+  font-size: 11px;
+  line-height: 1.9;
+}
+@media (max-width: 720px) {
+  nav button {
+    flex-wrap: wrap;
+  }
+  .ai-actions button {
+    flex: 1 1 auto;
+  }
+}

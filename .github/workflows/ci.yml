@@ -1,8 +1,8 @@
-name: V1 checks
+name: Studio checks
 on:
   pull_request:
   push:
-    branches: [main, feat/story-studio-v1]
+    branches: [main, feat/story-studio-v1, feat/elevenlabs-v2]
 permissions:
   contents: read
 jobs:
