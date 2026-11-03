@@ -940,3 +940,32 @@ input[type="range"] {
     gap: 10px;
   }
 }
+
+.validation-error {
+  display: block;
+  color: #a13b2b !important;
+  font-size: 12px;
+  line-height: 1.8;
+  margin-top: 8px;
+}
+[aria-invalid="true"] {
+  border: 1px solid #b85540;
+}
+.recovery-panel {
+  margin: 20px 36px;
+  padding: 18px;
+  border: 1px solid #dbc596;
+  border-radius: 8px;
+  background: #fffcf2;
+  color: #6d5631;
+  font-size: 12px;
+  line-height: 1.9;
+}
+.recovery-panel button {
+  margin: 4px 8px 4px 0;
+}
+@media (max-width: 720px) {
+  .recovery-panel {
+    margin: 16px 14px;
+  }
+}

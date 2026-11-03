@@ -45,44 +45,140 @@ export const initialProject = () => ({
   subtitles: "both",
   scenes: [],
 });
-export function parseProject(value) {
-  const p = typeof value === "string" ? JSON.parse(value) : value;
-  const str = (x) => typeof x === "string" && x.length <= 100000;
+// All limits use UTF-16 code units, matching JavaScript strings and editor counts.
+export const TEXT_LIMIT = 100000;
+export const TITLE_LIMIT = 120;
+export const PROJECT_BYTES_LIMIT = 5 * 1024 * 1024;
+export function textError(value, label, limit = TEXT_LIMIT) {
+  if (typeof value !== "string") return `${label}必须是文本。`;
+  if (value.length > limit)
+    return `${label}超过 ${limit.toLocaleString("en-US")} 字符限制（当前 ${value.length.toLocaleString("en-US")}），请缩短后再保存或导出。`;
+  return "";
+}
+export function validateProject(p, { recovery = false } = {}) {
+  const str = (value, label, limit) => {
+    const error = textError(value, label, recovery ? Infinity : limit);
+    if (error) throw Error(error);
+  };
   if (
     !p ||
+    typeof p !== "object" ||
     p.version !== 1 ||
-    !str(p.title) ||
-    !str(p.english) ||
-    !str(p.chinese) ||
     !p.character ||
-    !["name", "appearance", "clothing"].every((k) => str(p.character[k])) ||
+    !Array.isArray(p.scenes) ||
+    p.scenes.length > 500 ||
     !["绘本水彩", "电影质感", "温暖插画", "极简剪纸"].includes(p.style) ||
     !["9:16", "16:9"].includes(p.ratio) ||
     !["en", "zh", "both"].includes(p.subtitles) ||
     !Number.isFinite(p.rate) ||
     p.rate < 0.5 ||
-    p.rate > 1.5 ||
-    !Array.isArray(p.scenes) ||
-    p.scenes.length > 500 ||
-    !p.scenes.every(
-      (s) =>
-        s &&
-        ["english", "chinese", "description"].every((k) => str(s[k])) &&
-        Number.isInteger(s.duration) &&
-        s.duration >= 1 &&
-        s.duration <= 60,
-    )
+    p.rate > 1.5
   )
     throw Error("项目格式不正确，请导入本工作室导出的 V1 JSON 文件。");
+  str(p.title, "项目名称", TITLE_LIMIT);
+  str(p.english, "英文文章", TEXT_LIMIT);
+  str(p.chinese, "中文译文", TEXT_LIMIT);
+  for (const [key, label] of [
+    ["name", "人物名称"],
+    ["appearance", "外貌特征"],
+    ["clothing", "固定服装"],
+  ])
+    str(p.character[key], label, TEXT_LIMIT);
+  p.scenes.forEach((scene, i) => {
+    if (
+      !scene ||
+      !Number.isInteger(scene.duration) ||
+      scene.duration < 1 ||
+      scene.duration > 60
+    )
+      throw Error(`分镜 ${i + 1} 的时长必须为 1–60 秒的整数。`);
+    for (const [key, label] of [
+      ["english", "英文"],
+      ["chinese", "中文"],
+      ["description", "画面描述"],
+    ])
+      str(scene[key], `分镜 ${i + 1} ${label}`, TEXT_LIMIT);
+  });
+  return p;
+}
+export function serializeProject(project) {
+  validateProject(project);
+  // Persist only V1 content. Scene IDs are editor identity, regenerated on import.
+  const {
+    version,
+    title,
+    english,
+    chinese,
+    character,
+    style,
+    ratio,
+    rate,
+    subtitles,
+    scenes,
+  } = project;
+  const raw = JSON.stringify({
+    version,
+    title,
+    english,
+    chinese,
+    character: {
+      name: character.name,
+      appearance: character.appearance,
+      clothing: character.clothing,
+    },
+    style,
+    ratio,
+    rate,
+    subtitles,
+    scenes: scenes.map(({ english, chinese, description, duration }) => ({
+      english,
+      chinese,
+      description,
+      duration,
+    })),
+  });
+  if (new TextEncoder().encode(raw).byteLength > PROJECT_BYTES_LIMIT)
+    throw Error("项目总大小超过 5 MB，请缩短文本或减少分镜后再保存或导出。");
+  return raw;
+}
+export function parseProject(value) {
+  if (
+    typeof value === "string" &&
+    new TextEncoder().encode(value).byteLength > PROJECT_BYTES_LIMIT
+  )
+    throw Error("项目总大小超过 5 MB，请缩短文本或减少分镜后再保存或导出。");
+  let p;
+  try {
+    p = typeof value === "string" ? JSON.parse(value) : value;
+  } catch {
+    throw Error("JSON 无法解析，原有内容未被修改。");
+  }
+  serializeProject(p);
   return { ...p, scenes: p.scenes.map((s) => ({ ...s, id: uid() })) };
 }
-export function downloadProject(project) {
+// Recovery only: retain over-limit legacy text in the editor without permitting a save.
+export function recoverProject(raw) {
+  try {
+    const p = validateProject(JSON.parse(raw), { recovery: true });
+    return { ...p, scenes: p.scenes.map((s) => ({ ...s, id: uid() })) };
+  } catch {
+    return null;
+  }
+}
+export function downloadText(raw, filename) {
   const url = URL.createObjectURL(
-    new Blob([JSON.stringify(project, null, 2)], { type: "application/json" }),
+    new Blob([raw], { type: "application/json" }),
   );
   const a = document.createElement("a");
   a.href = url;
-  a.download = `${project.title.replace(/[\\/:*?"<>|]/g, "_") || "story"}.json`;
+  a.download = filename;
   a.click();
   setTimeout(() => URL.revokeObjectURL(url), 10000);
+}
+export function downloadProject(project) {
+  const raw = serializeProject(project);
+  downloadText(
+    raw,
+    `${project.title.replace(/[\\/:*?"<>|]/g, "_") || "story"}.json`,
+  );
 }
