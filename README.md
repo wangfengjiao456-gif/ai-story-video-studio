@@ -1,6 +1,6 @@
-# AI Story Video Studio V1
+# AI Story Video Studio V2 · ElevenLabs 配音
 
-中文界面的故事视频创作工作台，使用 React + Vite，无需付费 AI API。桌面为左侧导航、中央编辑、右侧预览布局；iPad 与手机会自动适配。
+中文界面的故事视频创作工作台，使用 React + Vite；V1 功能无需付费 API，V2 的 ElevenLabs 配音通过 Vercel 服务端调用。桌面为左侧导航、中央编辑、右侧预览布局；iPad 与手机会自动适配。
 
 ## 运行
 
@@ -19,7 +19,7 @@ npm run build
 npm run preview
 ```
 
-构建产物在 `dist/`，可部署至任何支持静态网站的服务。`npm run preview` 默认端口 4173。
+构建产物在 `dist/`。V1 可以纯静态运行，V2 配音需要同时运行根目录 `api/` 中的 Vercel Function。`npm run preview` 默认端口 4173。
 
 ## 已实现
 
@@ -44,8 +44,8 @@ npm run preview
 
 - **画面均为 CSS 演示占位，并非 AI 生成。**画风设置保存在项目中，当前演示图形不会根据描述生成人物或图片。
 - **MP4 导出待开发**，界面仅显示状态，没有无效导出按钮。
-- 不提供自动翻译、AI 图片生成、ElevenLabs、音频文件导出、服务端存储或用户账号。
-- 连续预览按分镜时长播放字幕，不自动朗读；逐句朗读需点击触发，适配 Safari 的用户手势限制。系统声音取决于设备配置，可能需要联网；未支持语音合成时可继续编辑。
+- 不提供自动翻译、AI 图片生成、音频云存储或用户账号。V2 支持 ElevenLabs 生成和 MP3 下载，音频只存当前页面内存。
+- V1 无音频预览按分镜时长播放字幕，不自动朗读；V2 音频播放按播放器时间更新字幕。逐句朗读需点击触发，适配 Safari 的用户手势限制。系统声音取决于设备配置，可能需要联网；未支持语音合成时可继续编辑。
 - 分句依赖 `Intl.Segmenter`，旧浏览器使用标点回退；缩写可能导致误拆，需人工检查。
 - 未承诺在实体 iPad Safari 验证：需在目标设备检查语音、JSON 下载与文件导入。
 
@@ -57,7 +57,7 @@ npm run preview
 - `src/App.jsx`：文章、分镜、角色与配音工作台。
 - `src/styles.css`：响应式布局。
 
-接入付费图片或语音服务时，密钥应保存在服务端；不能放入 Vite 客户端环境变量。图片接口应返回真实图片 URL 与生成状态，语音接口应返回音频和时间信息，再增加字幕对齐和可靠视频编码流水线。
+图片服务后续可接入，密钥必须保存在服务端。V2 的 ElevenLabs 已使用独立服务端接口返回音频和时间信息；可靠视频编码流水线仍待开发。
 
 ## 手工验收
 
@@ -82,3 +82,75 @@ npm run preview
 - 本地存储使用 `story-studio-v1` 保存项目、`story-studio-v1.recovery` 保存原始恢复备份；不要清理浏览器数据直至已下载备份。
 
 自动化回归测试覆盖所有文本字段的边界与超限、配额/权限失败、刷新恢复、损坏存档保护、备份失败和 JSON 实际下载后重新导入。
+
+## V2 ElevenLabs 配音
+
+### 固定配置与官方核实
+
+- Voice ID：`NDTYOmYEjbDIVCKB35i3`（未获取账户声音列表，显示真实 ID，不虚构名称）。
+- 模型固定 `eleven_v3` / Eleven v3，语言 `en` / English。
+- 通过 `voice_settings.speed` 设置生成速度，默认 **0.8**；页面提供 **0.7–1.2** 的慢速跟读常用范围。
+- 每次上限 5,000 字符。文章超过上限仍可用 V1 编辑保存，请缩短文章或逐个分镜生成；不偷偷换模型、截断、分段计费或自动重试。
+- 输出 `mp3_44100_128`。50 秒上游超时，函数最大 60 秒；响应限制 4 MB，超过时提示缩短文章或按分镜生成。生成失败或超时仍可能产生上游费用，请先检查账户历史再重新生成。
+
+2026-11-03 核实的官方来源：
+
+- [模型与单次字符上限](https://elevenlabs.io/docs/overview/models)：支持 `eleven_v3`。
+- [官方语速说明](https://elevenlabs.io/docs/overview/capabilities/text-to-speech/best-practices)：`voice_settings` 可设置 0.7–1.2；[官方维护的语音参数参考](https://github.com/elevenlabs/skills/blob/main/text-to-speech/references/voice-settings.md) 标明 v3 支持 speed、REST 支持更宽范围。本项目采用两者共同覆盖的范围，0.8 无需替换模型。
+- [生成音频与字符时间戳](https://elevenlabs.io/docs/api-reference/text-to-speech/convert-with-timestamps)：使用 `/v1/text-to-speech/{voice_id}/with-timestamps`，请求 `language_code: en`。
+
+会员身份本身不证明此 Voice ID 对当前 Key 可用；真实音色、账号权限及模型的实际慢速效果，需要配置真实 Key 后试听确认。如果 API 拒绝设置，会显示错误，不回退到其他模型。
+
+### 使用方式与同步边界
+
+1. 完成文章、双语分镜，打开左侧 **AI 配音**。
+2. 选择 AI 生成语速，点击整篇或对应分镜的生成按钮；每次生成可能消耗额度。
+3. 生成后手动点击试听，使用原生播放器暂停、继续和拖动；从头播放会重置到起点。所有镜都已生成时可顺序播放分镜音频。
+4. 整篇音频使用浏览器读取的真实 MP3 时长；当 API 字符数组与原文对应、时间合法且与时长一致时，标记 **API 字符时间戳同步**。该标签表示数据来源，不保证模型对齐误差为零，需试听校对。
+5. 缺少/异常时间戳，或分镜英文不能对应文章时，明确标记 **估算同步**：按英文词数权重分配真实音频总时长。无真实时长时不伪造同步。
+6. 单镜音频按真实时长显示、按音频 `ended` 事件切镜。播放器 `currentTime` 驱动预览，暂停保持进度，双语字幕沿用分镜内容；不声称实现中文逐词对齐。
+7. 编辑英文或更改生成语速时，相关音频标记 **需要重新生成**；旧文件仍可下载。文章音频和分镜音频分别绑定各自的英文。中文、画面描述等修改不会要求重新合成英文声音。
+8. 手动下载 MP3。音频、Blob URL 与 AI 生成速度仅在当前会话内，不写入项目 JSON/localStorage，也没有云端音频存储；刷新或导入项目后需重新生成。V1 JSON 结构及旧项目不变。
+
+### Vercel 环境变量（由项目所有者操作）
+
+本次开发只提交 PR，不运行部署、不更改生产环境配置。
+
+1. 打开 Vercel 对应项目 → **Settings → Environment Variables**。
+2. 新增名称 **`ELEVENLABS_API_KEY`**，值填写你的 ElevenLabs API Key；类型选择敏感值（如果界面支持）。不要添加 `VITE_` 前缀。
+3. 审查阶段先只选 **Preview**，可限定 `feat/elevenlabs-v2` 分支。不要为了测试修改 Production 配置。
+4. 由你创建/重新部署该分支的 Preview，使新增变量生效，再在预览页面验证。
+5. 未来批准正式发布后，再按需设置 **Production** 并部署；本次 PR 不执行该步骤。
+
+服务器只在 `api/elevenlabs.js` 读取环境变量，浏览器只提交英文和语速。接口不返回密钥、不记录请求密钥或上游原始错误，设置 `Cache-Control: no-store`。未配置、无效 Key、权限不足、配额不足、生成失败和网络故障均有中文错误；失败不影响 V1。
+
+这是个人创作工具，没有账户鉴权。接口校验同源 Origin 和 JSON，但 **同源检查不是访问控制**。配置付费 Key 的预览请启用 Vercel Deployment Protection，仅向可信使用者开放；正式公开前应使用 Vercel 的访问保护/防火墙限流和 ElevenLabs 的 Key 配额限制，避免匿名访客使用你的额度。本 PR 不修改你的访问策略。
+
+### 本地运行服务端
+
+`npm run dev` 和 `npm run preview` 仅运行 Vite，不能调用 Serverless Function；其他 V1 功能正常。完整本地测试可使用 Vercel CLI：
+
+```bash
+npm install
+# 将 .env.example 复制为 .env.local，在本机编辑其中的 Key（不要提交）
+npx vercel dev
+```
+
+使用 CLI 显示的地址，按提示关联现有 Vercel 项目。`.env*` 与 `.vercel/` 已忽略，仓库只包含空值 `.env.example`。不要将 Key 输入网站、项目 JSON、聊天、命令行参数或浏览器 localStorage。
+
+### V2 模块与自动化测试
+
+- `api/elevenlabs.js`：Vercel Node.js 服务端代理，固定声音/模型、输入验证、错误映射、超时与响应大小保护。
+- `src/voiceConfig.js`：公开固定配置和共享输入规则，无密钥。
+- `src/services/aiVoice.js`：同源客户端、时长/字符对齐校验、估算时间线。
+- `src/hooks/useVoiceStudio.js`：音频状态、旧音频检测、播放/暂停/继续、异步请求取消。
+- `src/components/AIVoicePanel.jsx`：中文生成工作台、播放器和 MP3 下载。
+
+```bash
+npm test
+npm run build
+```
+
+所有 ElevenLabs 自动化测试均是 **模拟 API / 模拟音频元素**，不会消耗额度，不代表真实 MP3 播放或语音质量已经验证。新增测试覆盖服务端请求参数、中文错误、超时、响应上限、客户端错误、对齐/估算切镜、暂停继续、逐镜顺序和导入取消请求。`react-test-renderer` 仅用于隔离测试 Hook，React 会提示此测试工具已弃用，不进入生产包。
+
+需要真实 Key 的验收：固定 Voice ID 权限、v3 0.8 的听感、45–60 秒文稿实际时长、API 对齐质量、生成延迟、Vercel 函数请求/返回链路。实体 iPad Safari 还需检查手势播放、暂停继续、顺序切镜及 MP3 下载（必要时用分享菜单“存储到文件”）。没有执行真实 ElevenLabs 请求或生产部署。

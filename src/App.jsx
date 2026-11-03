@@ -31,12 +31,16 @@ import {
 import { browserVoiceProvider as voice } from "./services/providers.js";
 import Preview from "./components/Preview.jsx";
 import Field from "./components/Field.jsx";
+import AIVoicePanel from "./components/AIVoicePanel.jsx";
+import useVoiceStudio from "./hooks/useVoiceStudio.js";
+import { isFresh } from "./services/aiVoice.js";
 import { loadProject, saveProject } from "./services/projectStorage.js";
 const tabs = [
   ["article", "文章编辑", BookOpen],
   ["scenes", "故事分镜", Clapperboard],
   ["characters", "角色与画风", Users],
   ["audio", "配音与字幕", AudioLines],
+  ["ai", "AI 配音", Sparkles],
 ];
 function load() {
   let result;
@@ -70,11 +74,38 @@ export default function App() {
   const [blocked, setBlocked] = useState(
     !!startup.recovery && !startup.project,
   );
+  const ai = useVoiceStudio(p, {
+    onStart: () => {
+      setPlaying(false);
+      voice.stop();
+    },
+    onFrame: setIndex,
+  });
+  const previewProject = {
+    ...p,
+    scenes: p.scenes.map((scene, i) => {
+      const clip = ai.assets[scene.id];
+      const range =
+        ai.selected === "article" && isFresh(ai.current, p.english, ai.speed)
+          ? ai.timeline.ranges.find((r) => r.index === i)
+          : null;
+      return {
+        ...scene,
+        duration: range
+          ? range.end - range.start
+          : isFresh(clip, scene.english, ai.speed) && clip.duration
+            ? clip.duration
+            : scene.duration,
+      };
+    }),
+  };
+  const frameDuration = previewProject.scenes[index]?.duration;
   const input = useRef(null);
   const update = (patch) => setP((prev) => ({ ...prev, ...patch }));
   const stop = () => {
     setPlaying(false);
     voice.stop();
+    ai.pause();
   };
   useEffect(() => {
     if (!voice.available()) return;
@@ -99,9 +130,9 @@ export default function App() {
     const t = setTimeout(() => {
       if (index < p.scenes.length - 1) setIndex(index + 1);
       else setPlaying(false);
-    }, p.scenes[index].duration * 1000);
+    }, frameDuration * 1000);
     return () => clearTimeout(t);
-  }, [playing, index, p.scenes]);
+  }, [playing, index, p.scenes, frameDuration]);
   useEffect(() => {
     if (!message) return;
     const t = setTimeout(() => setMessage(""), 6500);
@@ -174,6 +205,7 @@ export default function App() {
       if (!window.confirm("导入将替换当前工作区，未保存内容会丢失。是否继续？"))
         return;
       stop();
+      ai.reset();
       setP(project);
       setBlocked(false);
       setIndex(0);
@@ -207,7 +239,7 @@ export default function App() {
           </span>
         </a>
         <div className="workspace-label">
-          创作工作台 <span>V1.0</span>
+          创作工作台 <span>V2.0</span>
         </div>
         <nav>
           {tabs.map(([id, label, Icon], i) => (
@@ -328,9 +360,13 @@ export default function App() {
                   </div>
                   <span className="muted">
                     {p.scenes.length} 个分镜 ·{" "}
-                    {p.scenes.reduce((a, s) => a + s.duration, 0)} 秒
+                    {previewProject.scenes
+                      .reduce((a, s) => a + s.duration, 0)
+                      .toFixed(1)}{" "}
+                    秒
                   </span>
                 </div>
+                <AIVoicePanel project={p} studio={ai} hidden={tab !== "ai"} />
                 {tab === "article" && (
                   <>
                     <div className="intro">
@@ -666,19 +702,35 @@ export default function App() {
                     ))}
                     <div className="tip">
                       声音取决于设备已安装的英文语音。部分声音需要网络；Safari
-                      请点击逐句试听。ElevenLabs 等服务尚未接入。
+                      请点击逐句试听。ElevenLabs 配音请使用左侧“AI 配音”。
                     </div>
                   </>
                 )}
               </main>
               <Preview
-                project={p}
+                project={previewProject}
+                syncLabel={
+                  ai.playing
+                    ? ai.timeline.mode === "aligned"
+                      ? "AI 音频 · API 字符时间戳同步"
+                      : ai.selected === "article"
+                        ? ai.timeline.mode === "unavailable"
+                          ? "AI 音频 · 等待真实时长"
+                          : "AI 音频 · 估算同步"
+                        : "AI 音频 · 单镜真实时长同步"
+                    : null
+                }
                 index={index}
                 setIndex={setIndex}
-                playing={playing}
+                playing={playing || ai.playing}
                 stop={stop}
                 toggle={() => {
                   voice.stop();
+                  if (ai.playing || (tab === "ai" && ai.selected)) {
+                    ai.toggle();
+                    return;
+                  }
+                  ai.pause();
                   setPlaying(!playing);
                 }}
               />
@@ -686,7 +738,7 @@ export default function App() {
           </>
         )}
         <footer>
-          用故事连接语言，用创作发现可能。<span>STORY STUDIO / V1</span>
+          用故事连接语言，用创作发现可能。<span>STORY STUDIO / V2</span>
         </footer>
       </div>
       {message && (

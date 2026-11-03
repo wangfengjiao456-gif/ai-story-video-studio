@@ -2,6 +2,7 @@ import React from "react";
 import { Play, Pause, ChevronLeft, ChevronRight, Mountain } from "lucide-react";
 export default function Preview({
   project,
+  syncLabel,
   index,
   setIndex,
   playing,
@@ -95,8 +96,10 @@ export default function Preview({
       <div className="note">
         <strong>预览说明</strong>
         <p>
-          播放按每镜时长切换。英文朗读请使用“逐句试听”，iPad
-          上需手动触发。所有画面均为 CSS 演示占位。
+          {syncLabel && <strong className="sync-label">{syncLabel}。 </strong>}
+          播放按每镜时长切换。AI 音频请到“AI
+          配音”控制。英文朗读请使用“逐句试听”，iPad 上需手动触发。所有画面均为
+          CSS 演示占位。
         </p>
       </div>
       <div className="export-note">
