@@ -43,8 +43,19 @@ export default function TemplateSettings({ project, onChange }) {
     <section className="template-settings" aria-label="视频画面模板">
       <div className="toolbar">
         <strong>视频画面模板</strong>
-        <span className="badge">V3 · 9:16</span>
+        <span className="badge">V3.1 · {p.ratio}</span>
       </div>
+      <label className="field">
+        <span>视频画幅</span>
+        <select
+          value={p.ratio}
+          onChange={(e) => onChange({ ratio: e.target.value })}
+        >
+          <option value="9:16">9:16 · 默认竖屏</option>
+          <option value="16:9">16:9 · 横屏教学</option>
+          <option value="4:5">4:5 · 社交媒体图文</option>
+        </select>
+      </label>
       <div className="template-choices">
         {[
           ["picturebook", "模板 A · 独立字幕区", "适合教材与英语跟读"],
@@ -58,8 +69,7 @@ export default function TemplateSettings({ project, onChange }) {
               onChange({
                 videoTemplate: id,
                 subtitleStyle: templateDefaults(id),
-                subtitlePosition: 6,
-                ratio: "9:16",
+                subtitlePosition: 16,
               })
             }
           >
@@ -74,7 +84,7 @@ export default function TemplateSettings({ project, onChange }) {
         ))}
       </div>
       <p className="muted">
-        选择模板会应用该模板默认样式并切为竖屏；人物、图片、文字与已有配音保留。
+        选择模板会应用该模板默认样式，保留当前画幅；人物、图片、文字与已有配音保留。
       </p>
       <div className="style-control-grid">
         {range("englishSize", "英文字号（1080p）")}
@@ -87,14 +97,17 @@ export default function TemplateSettings({ project, onChange }) {
           p.videoTemplate === "immersive" ? "遮罩强度" : "字幕背景不透明度",
         )}
         {range("gap", "中英文间距（1080p）")}
+        {range("topMargin", "字幕区上边距（1080p）")}
+        {range("stroke", "文字描边（1080p）")}
+        {range("shadow", "文字阴影（1080p）")}
         <label className="field template-range">
           <span>
             距底部安全边距<em>{p.subtitlePosition}%</em>
           </span>
           <input
             type="range"
-            min="6"
-            max="12"
+            min="4"
+            max="20"
             step="1"
             value={p.subtitlePosition}
             onChange={(e) =>
@@ -148,7 +161,7 @@ export default function TemplateSettings({ project, onChange }) {
           checked={p.subtitleSafeArea}
           onChange={(e) => onChange({ subtitleSafeArea: e.target.checked })}
         />
-        显示字幕安全区域（仅编辑辅助）
+        平台安全区域参考线（仅编辑辅助，各平台界面可能不同）
       </label>
       {colorNotice && (
         <p className="tip" role="status">
@@ -159,7 +172,7 @@ export default function TemplateSettings({ project, onChange }) {
         onClick={() =>
           onChange({
             subtitleStyle: templateDefaults(p.videoTemplate),
-            subtitlePosition: 6,
+            subtitlePosition: 16,
           })
         }
       >

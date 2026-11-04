@@ -31,6 +31,8 @@ import {
 import { browserVoiceProvider as voice } from "./services/providers.js";
 import Preview from "./components/Preview.jsx";
 import Field from "./components/Field.jsx";
+import CharacterReference from "./components/CharacterReference.jsx";
+import useImageGeneration from "./hooks/useImageGeneration.js";
 import TemplateSettings from "./components/TemplateSettings.jsx";
 import SceneImageSettings from "./components/SceneImageSettings.jsx";
 import AIVoicePanel from "./components/AIVoicePanel.jsx";
@@ -83,6 +85,27 @@ export default function App() {
     },
     onFrame: setIndex,
   });
+  const imageGeneration = useImageGeneration(p, (id, imageRef) =>
+    setP((prev) => ({
+      ...prev,
+      scenes: prev.scenes.map((scene) =>
+        scene.id === id
+          ? {
+              ...scene,
+              imageRef,
+              imageFit: "contain",
+              imageScale: 1,
+              imagePosition: { x: 50, y: 50 },
+            }
+          : scene,
+      ),
+    })),
+  );
+  const setCharacterReference = (referenceImage) =>
+    setP((prev) => ({
+      ...prev,
+      character: { ...prev.character, referenceImage },
+    }));
   const previewProject = {
     ...p,
     scenes: p.scenes.map((scene, i) => {
@@ -215,6 +238,7 @@ export default function App() {
         return;
       stop();
       ai.reset();
+      imageGeneration.reset();
       setP(project);
       setBlocked(false);
       setIndex(0);
@@ -248,7 +272,7 @@ export default function App() {
           </span>
         </a>
         <div className="workspace-label">
-          创作工作台 <span>V3.0</span>
+          创作工作台 <span>V3.1</span>
         </div>
         <nav>
           {tabs.map(([id, label, Icon], i) => (
@@ -544,6 +568,9 @@ export default function App() {
                         />
                         <SceneImageSettings
                           scene={s}
+                          project={p}
+                          generation={imageGeneration}
+                          onSetStandard={setCharacterReference}
                           onChange={(patch) => editVisualScene(s.id, patch)}
                         />
                         <div className="scene-bottom">
@@ -597,6 +624,10 @@ export default function App() {
                         }
                       />
                     ))}
+                    <CharacterReference
+                      reference={p.character.referenceImage}
+                      onChange={setCharacterReference}
+                    />
                     <label className="field">
                       <span>统一画风</span>
                       <div className="style-options">
@@ -625,10 +656,13 @@ export default function App() {
                       >
                         <option value="9:16">9:16 · 竖屏短视频</option>
                         <option value="16:9">16:9 · 横屏故事</option>
+                        <option value="4:5">4:5 · 社交媒体图文</option>
                       </select>
                     </label>
                     <div className="tip">
-                      当前预览使用固定演示图形；人物和画面描述不会生成真实图片。图片服务接口已预留。
+                      配图请到故事分镜点击“AI
+                      生成配图”，或上传本地图片。只有用户确认后才调用图片
+                      API；人物一致性和无文字效果需人工检查。
                     </div>
                     <button className="primary" onClick={save}>
                       <Save size={16} />
@@ -757,8 +791,32 @@ export default function App() {
             </div>
           </>
         )}
+        {imageGeneration.error && (
+          <div className="recovery-panel" role="alert">
+            {imageGeneration.error}
+          </div>
+        )}
+        {imageGeneration.pending && (
+          <div className="recovery-panel">
+            <a
+              href={imageGeneration.pending.imageRef.dataUrl}
+              download="unapplied-illustration.jpg"
+            >
+              下载未应用的生成结果
+            </a>
+            <button
+              onClick={() => {
+                if (window.confirm("将结果应用到原分镜？会替换该镜当前图片。"))
+                  imageGeneration.applyPending();
+              }}
+            >
+              应用到原分镜
+            </button>
+            <button onClick={imageGeneration.clearPending}>关闭结果</button>
+          </div>
+        )}
         <footer>
-          用故事连接语言，用创作发现可能。<span>STORY STUDIO / V3</span>
+          用故事连接语言，用创作发现可能。<span>STORY STUDIO / V3.1</span>
         </footer>
       </div>
       {message && (

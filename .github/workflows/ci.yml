@@ -3,7 +3,7 @@ on:
   pull_request:
   push:
     branches:
-      [main, feat/story-studio-v1, feat/elevenlabs-v2, feat/story-studio-v3]
+      [main, feat/story-studio-v1, feat/elevenlabs-v2, feat/story-studio-v3, feat/story-studio-v3-1]
 permissions:
   contents: read
 jobs:

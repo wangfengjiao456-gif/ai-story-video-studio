@@ -1,4 +1,4 @@
-# AI Story Video Studio V2 · ElevenLabs 配音
+# AI Story Video Studio V3.1
 
 中文界面的故事视频创作工作台，使用 React + Vite；V1 功能无需付费 API，V2 的 ElevenLabs 配音通过 Vercel 服务端调用。桌面为左侧导航、中央编辑、右侧预览布局；iPad 与手机会自动适配。
 
@@ -44,7 +44,7 @@ npm run preview
 
 - **画面均为 CSS 演示占位，并非 AI 生成。**画风设置保存在项目中，当前演示图形不会根据描述生成人物或图片。
 - **MP4 导出待开发**，界面仅显示状态，没有无效导出按钮。
-- 不提供自动翻译、AI 图片生成、音频云存储或用户账号。V2 支持 ElevenLabs 生成和 MP3 下载，音频只存当前页面内存。
+- 不提供自动翻译、音频云存储或用户账号。V3.1 新增 OpenAI 配图调用代码，真实生成尚待 Key 验证。V2 支持 ElevenLabs 生成和 MP3 下载，音频只存当前页面内存。
 - V1 无音频预览按分镜时长播放字幕，不自动朗读；V2 音频播放按播放器时间更新字幕。逐句朗读需点击触发，适配 Safari 的用户手势限制。系统声音取决于设备配置，可能需要联网；未支持语音合成时可继续编辑。
 - 分句依赖 `Intl.Segmenter`，旧浏览器使用标点回退；缩写可能导致误拆，需人工检查。
 - 未承诺在实体 iPad Safari 验证：需在目标设备检查语音、JSON 下载与文件导入。
@@ -194,3 +194,46 @@ npm run build
 本次不调用生产部署、不改 Production 变量、不合并 PR。推送 `feat/story-studio-v3` 后，现有 Vercel Git 集成通常自动创建 Preview：在 V3 PR 的 Vercel 检查或项目 Deployments 中选择该分支，打开 Visit。确认环境标记为 **Preview**，不要 Promote to Production。
 
 如未自动生成，由项目所有者在 Vercel 创建该分支的 Preview。沿用 V2 Preview 的服务器端 `ELEVENLABS_API_KEY`，若原变量限定 V2 分支，需为 V3 Preview 分支配置同名变量并重新部署预览；无 Key 也能测试模板、图片与浏览器朗读。保持付费接口的现有访问保护，勿新增 `VITE_ELEVENLABS_API_KEY`。
+
+## V3.1 增量升级（当前行为）
+
+本节覆盖上面历史版本的默认值与图片上传说明。保留 V2 ElevenLabs 服务端、声音配置、语速 0.8、客户端和音频播放 Hook，未更改 Production 密钥。
+
+### 画幅、安全区与导出
+
+- 新增 4:5，并保留 9:16、16:9；切换模板不再强制重置画幅。新项目的字幕底部位置默认上移到 **16%**，旧项目已有位置保留。
+- 字幕底部位置可在 4%–20% 调整，上边距 16–96px；字幕区高度、背景/遮罩不透明度继续可调，新增描边 0–3px 和阴影 0–12px。极端设置下自动扩大字幕区域以保证最小可读行高，长文本分页不裁切。
+- 可切换“平台安全区域参考线”：上 8%、左右 10%、下 14%，仅为通用参考，各平台实际 UI 和设备可能不同，不保证自动识别遮挡。必要时手动提高字幕或调整构图。
+- 预览改用固定最终像素画布渲染；**“导出当前字幕页 PNG”直接导出同一画布**，字体、颜色、图片、裁切与字幕位置使用同一 `framePlan` / `paintFrame`，不包含参考线。9:16 为 1080×1920，16:9 为 1920×1080，4:5 为 1080×1350。
+- PNG 是当前分镜、当前字幕页的画面，不含音频；完整 MP4 仍未开发，不宣称已实现最终视频导出。超长字幕的页间切换仍是时长比例估算，原 V2 分镜时间戳机制不变。
+
+### 原图、角色标准形象与保存
+
+- 上传保留 JPG/PNG/WebP **原始字节**，不再永久缩小原图；Cover/Contain、缩放、焦点及画幅变化均只改变显示。新上传/生成默认 Contain，原项目已有 Cover 设置保留。可单独下载原始图片，避免将裁切后的图片反复作为输入。
+- 上传仍最多 8 MB / 1,600 万像素；项目 JSON 和 localStorage 总量仍限 5 MB。原图较大或多图导致保存超限时，显示失败并保留草稿及旧存档；请先下载原图并使用较小文件，不能将“已显示图片”等同于“已保存项目”。
+- “角色与画风”可上传/移除人物参考图；任意分镜图片也可设为标准形象。存入 `character.referenceImage`，与固定人物名称、外貌、服装、统一画风一起保存恢复。
+- 生成请求会使用参考图；过大的参考图仅为请求临时制作 600 KB 内副本，不改变项目原图。使用 `images.edit` 作为参考生成新的场景动作，不是逐像素复制人物，一致性需人工检查。
+- `imageRef.kind` 为 upload / generated，generated 会保存模型与是否使用参考图；原 V3 的 upload 图片可以继续读取。API Key 从不进入项目 JSON。
+
+### OpenAI 官方 SDK 接入（尚未真实 API 验收）
+
+新增 `api/openai-image.js`，使用官方 `openai` Node SDK。2026-11-04 查阅官方 [图片生成指南](https://developers.openai.com/api/docs/guides/image-generation)、[生成接口](https://developers.openai.com/api/reference/resources/images/methods/generate)及[编辑接口](https://developers.openai.com/api/reference/resources/images/methods/edit)，采用当前推荐模型 **gpt-image-2.5-sunburst**；固定 medium、n=1、JPEG、1024×1536（竖屏/4:5）或 1536×1024（横屏）。实际视频画幅由显示布局适配，不偷偷更换模型。
+
+- “故事分镜”中点击“AI 生成配图/重新生成”，每次先确认预计操作：一张、模型、尺寸、质量、是否向 OpenAI 发送参考图，以及按输入/输出 token 计费。无法在生成前精确报价，提供[官方价格](https://developers.openai.com/api/docs/pricing)链接；参考图可能额外计费，超时/失败也可能已经产生费用。
+- 只处理用户点击的单个分镜，不自动批量生成、自动重试或在切换画幅时重新生成。SDK `maxRetries: 0`，服务超时 105 秒，Vercel 函数 120 秒；平台实际支持时长应在 Preview 检查。
+- 提示词包含英文故事（最多 12,000 字符）、本镜英文/中文/描述、人物名称/外貌/服装和统一画风，要求保持发型、固定服装、主要特征，画面下方留白且不要文字、水印或 logo。超长输入会明确拒绝，不悄悄截断。无文字/水印与角色一致性是生成目标，不能保证，需人工验收。
+- 未配置、Key 无效、额度不足、权限不足、限流、拒绝、网络/生成失败均有中文提示；不反射上游错误或密钥。失败不覆盖旧图，成功只替换对应分镜。生成期间内容或角色发生变化时，结果先保留供下载/手动应用，避免迟到响应覆盖新内容。
+- API 只从服务端 `OPENAI_API_KEY` 读取；不新增任何 `VITE_...KEY`，不写日志或 localStorage。Origin/JSON/确认字段检查不等于账户鉴权，继续使用 Vercel 的现有访问保护，并在 OpenAI 项目设置预算，防止他人使用你的付费接口。
+
+### 新增 Vercel 环境变量与部署顺序
+
+仅新增 **`OPENAI_API_KEY`**。不要修改现有 `ELEVENLABS_API_KEY`。
+
+1. Vercel → 项目 → Settings → Environment Variables，添加 OPENAI_API_KEY，先仅选 **Preview**，可限定 `feat/story-studio-v3-1` 分支。不要使用 VITE_ 前缀。
+2. 打开本 PR 的 Vercel Preview，或在 Deployments 中选择该分支；变量新增后由项目所有者重新部署 Preview。没有 Key 时仍能测试画幅、字幕、PNG 导出和图片上传。
+3. 先在真实 Preview 手动确认单张生成、带人物参考图生成、下载、保存刷新、已有 MP3 播放及 iPad Safari 触控/字体/PNG 下载；检查账单与模型权限。当前自动化都是模拟 SDK/音频，不代表真实图片成功。
+4. **真实 API 与 iPad 验收未完成前不部署 Production。**后续验收通过并批准发布时，再为 Production 设置 OPENAI_API_KEY，使用已验证提交部署；保留原 ElevenLabs 密钥。本次不合并分支、不操作 Production。
+
+### 测试与限制
+
+`npm test` 与 `npm run build` 必须通过。新增 SDK 合约测试覆盖单张调用、人物参考图编辑、费用确认、错误映射、旧图保护、原图字节保留、三种画幅布局及 PNG 共享渲染计划；状态测试覆盖无自动生成、单镜应用和迟到响应。既有 ElevenLabs 模拟回归保持不变，真实 MP3 与真机 Safari 仍需按步骤人工验收。当前无真实 OPENAI_API_KEY 测试证据，因此只能确认代码接入和模拟测试，不宣称真实生图接入成功。

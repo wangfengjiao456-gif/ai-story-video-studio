@@ -77,7 +77,7 @@ export function validateProject(p, { recovery = false } = {}) {
     !Array.isArray(p.scenes) ||
     p.scenes.length > 500 ||
     !["绘本水彩", "电影质感", "温暖插画", "极简剪纸"].includes(p.style) ||
-    !["9:16", "16:9"].includes(p.ratio) ||
+    !["9:16", "16:9", "4:5"].includes(p.ratio) ||
     !["en", "zh", "both"].includes(p.subtitles) ||
     !Number.isFinite(p.rate) ||
     p.rate < 0.5 ||
@@ -110,6 +110,7 @@ export function validateProject(p, { recovery = false } = {}) {
   });
   validatePresentation(p);
   for (const scene of p.scenes) validateImageRef(scene.imageRef);
+  validateImageRef(p.character.referenceImage);
   return p;
 }
 export function serializeProject(project) {
@@ -137,6 +138,12 @@ export function serializeProject(project) {
       name: character.name,
       appearance: character.appearance,
       clothing: character.clothing,
+      ...(character.referenceImage
+        ? {
+            referenceImage: imageRecord({ imageRef: character.referenceImage })
+              .imageRef,
+          }
+        : {}),
     },
     style,
     ratio,
