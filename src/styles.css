@@ -1026,3 +1026,236 @@ input[type="range"] {
     flex: 1 1 auto;
   }
 }
+
+/* V3 uses a fixed 1080-wide frame, scaled as a single unit on every device. */
+.v3-preview-stage {
+  display: block;
+  padding: 14px;
+}
+.v3-frame-shell {
+  position: relative;
+  width: 100%;
+  overflow: hidden;
+  background: #fff8ec;
+  border-radius: 5px;
+  isolation: isolate;
+}
+.v3-frame-content {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: top left;
+  overflow: hidden;
+  background: #dce2d2;
+  font-family: Arial, "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+.v3-art {
+  position: absolute;
+  inset: 0 0 auto;
+  overflow: hidden;
+  background: linear-gradient(#ced4b6, #e2dcc0 65%, #adb592);
+}
+.v3-art img {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+.v3-art .traveler {
+  font-size: 200px;
+}
+.v3-subtitle-backdrop {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+}
+.v3-subtitle-text {
+  position: absolute;
+  font-weight: 600;
+}
+.subtitle-line {
+  white-space: pre;
+  margin: 0;
+  padding: 0;
+}
+.safe-area-guide {
+  position: absolute;
+  left: 10%;
+  right: 10%;
+  top: 8%;
+  bottom: 6%;
+  border: 1px dashed #e3b946;
+  pointer-events: none;
+  z-index: 10;
+}
+.safe-area-guide span {
+  position: absolute;
+  top: -17px;
+  left: -1px;
+  white-space: nowrap;
+  background: #143c2e;
+  color: #ffe8a0;
+  font-size: 8px;
+  padding: 2px 3px;
+}
+.frame-legend {
+  font-size: 9px;
+  color: #7c8b70;
+  margin-top: 10px;
+  text-align: center;
+  line-height: 1.8;
+}
+.subtitle-pages {
+  display: flex;
+  gap: 7px;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 12px;
+}
+.subtitle-pages button {
+  font-size: 10px;
+  padding: 6px;
+  min-height: 44px;
+}
+.subtitle-pages span {
+  font-size: 10px;
+  text-align: center;
+  color: #66795a;
+}
+.subtitle-pages small {
+  display: block;
+  font-size: 8px;
+  margin-top: 4px;
+}
+.template-settings {
+  border: 1px solid #e0e7d8;
+  background: #fcfdf9;
+  padding: 18px;
+  border-radius: 8px;
+  margin-bottom: 24px;
+}
+.template-choices {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.template-choices button {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  text-align: left;
+  padding: 10px;
+  gap: 9px;
+  min-width: 0;
+}
+.template-choices button.chosen {
+  border: 2px solid #3b7452;
+  background: #f1f6ea;
+}
+.template-choices strong {
+  font-size: 11px;
+  line-height: 1.7;
+}
+.template-choices small {
+  font-size: 9px;
+  color: #8b9880;
+  line-height: 1.6;
+}
+.template-thumb {
+  display: flex;
+  align-items: flex-end;
+  height: 135px;
+  overflow: hidden;
+  border-radius: 4px;
+  background: linear-gradient(145deg, #dce4c2, #819c75 60%, #52745b);
+}
+.template-thumb > span {
+  display: block;
+  width: 100%;
+  font-size: 10px;
+  text-align: center;
+  padding: 10px 3px;
+  color: #214e36;
+  background: #fff8ec;
+}
+.template-thumb small {
+  display: block;
+  color: inherit;
+  font-size: 8px;
+}
+.template-thumb.immersive > span {
+  padding-top: 20px;
+  color: white;
+  background: linear-gradient(transparent, #102f26e6);
+}
+.style-control-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0 20px;
+}
+.template-range input {
+  width: 100%;
+  min-height: 40px;
+  accent-color: #356a4f;
+}
+.color-controls {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  font-size: 11px;
+}
+.color-controls label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.color-controls input {
+  width: 42px;
+  height: 44px;
+  padding: 3px;
+  border: 1px solid #dde6d4;
+  background: white;
+  border-radius: 4px;
+}
+.safe-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  font-size: 12px;
+  margin: 12px 0;
+}
+.safe-toggle input {
+  width: 20px;
+  height: 20px;
+  accent-color: #356a4f;
+}
+.scene-image-settings {
+  border-top: 1px solid #e4eadb;
+  padding-top: 17px;
+  margin: 18px 0;
+}
+.uploaded-thumb {
+  display: block;
+  max-width: 100%;
+  width: 140px;
+  height: 100px;
+  object-fit: contain;
+  background: #f2f4e9;
+  border-radius: 5px;
+  margin: 12px 0;
+}
+@media (max-width: 720px) {
+  .template-settings {
+    padding: 12px;
+  }
+  .style-control-grid {
+    gap: 0 12px;
+  }
+  .template-choices {
+    gap: 8px;
+  }
+  .template-choices button {
+    padding: 7px;
+  }
+}

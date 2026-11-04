@@ -1,3 +1,11 @@
+import {
+  normalizePresentation,
+  validatePresentation,
+  presentationRecord,
+  imageDefaults,
+  presentationDefaults,
+} from "./presentation/settings.js";
+import { validateImageRef, imageRecord } from "./services/images.js";
 export const uid = () =>
   globalThis.crypto?.randomUUID?.() ||
   `scene-${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -28,6 +36,7 @@ export function splitArticle(english, chinese) {
   }));
 }
 export const initialProject = () => ({
+  ...presentationDefaults(),
   version: 1,
   title: "一场小小的冒险",
   english:
@@ -99,11 +108,13 @@ export function validateProject(p, { recovery = false } = {}) {
     ])
       str(scene[key], `分镜 ${i + 1} ${label}`, TEXT_LIMIT);
   });
+  validatePresentation(p);
+  for (const scene of p.scenes) validateImageRef(scene.imageRef);
   return p;
 }
 export function serializeProject(project) {
   validateProject(project);
-  // Persist only V1 content. Scene IDs are editor identity, regenerated on import.
+  // Persist supported V1–V3 content. Scene IDs are editor identity, regenerated on import.
   const {
     version,
     title,
@@ -117,6 +128,7 @@ export function serializeProject(project) {
     scenes,
   } = project;
   const raw = JSON.stringify({
+    ...presentationRecord(project),
     version,
     title,
     english,
@@ -130,11 +142,18 @@ export function serializeProject(project) {
     ratio,
     rate,
     subtitles,
-    scenes: scenes.map(({ english, chinese, description, duration }) => ({
-      english,
-      chinese,
-      description,
-      duration,
+    scenes: scenes.map((scene) => ({
+      english: scene.english,
+      chinese: scene.chinese,
+      description: scene.description,
+      duration: scene.duration,
+      ...imageRecord(scene),
+      imageFit: scene.imageFit ?? imageDefaults().imageFit,
+      imagePosition: {
+        x: scene.imagePosition?.x ?? 50,
+        y: scene.imagePosition?.y ?? 50,
+      },
+      imageScale: scene.imageScale ?? 1,
     })),
   });
   if (new TextEncoder().encode(raw).byteLength > PROJECT_BYTES_LIMIT)
@@ -154,13 +173,19 @@ export function parseProject(value) {
     throw Error("JSON 无法解析，原有内容未被修改。");
   }
   serializeProject(p);
-  return { ...p, scenes: p.scenes.map((s) => ({ ...s, id: uid() })) };
+  return normalizePresentation({
+    ...p,
+    scenes: p.scenes.map((s) => ({ ...s, id: uid() })),
+  });
 }
 // Recovery only: retain over-limit legacy text in the editor without permitting a save.
 export function recoverProject(raw) {
   try {
     const p = validateProject(JSON.parse(raw), { recovery: true });
-    return { ...p, scenes: p.scenes.map((s) => ({ ...s, id: uid() })) };
+    return normalizePresentation({
+      ...p,
+      scenes: p.scenes.map((s) => ({ ...s, id: uid() })),
+    });
   } catch {
     return null;
   }

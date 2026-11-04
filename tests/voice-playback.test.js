@@ -203,3 +203,62 @@ test("导入重置会取消旧请求，迟到响应不能污染新项目", async
     await h.cleanup();
   }
 });
+
+test("V3 模板、字号、图片及安全区变更保留音频与播放进度，且不会调用生成 API", async () => {
+  let requests = 0;
+  globalThis.fetch = async () => {
+    requests++;
+    return mockResponse();
+  };
+  const h = await mount();
+  try {
+    await h.generate("article");
+    await act(async () => h.studio.start("article", true));
+    h.audio.currentTime = 23;
+    const url = h.studio.current.url;
+    const changed = {
+      ...project(),
+      videoTemplate: "immersive",
+      subtitleStyle: { englishSize: 70 },
+      subtitleSafeArea: true,
+      subtitlePosition: 8,
+    };
+    changed.scenes = changed.scenes.map((s) => ({
+      ...s,
+      imageFit: "contain",
+      imageScale: 1.5,
+      imagePosition: { x: 70, y: 30 },
+    }));
+    await h.update(changed);
+    assert.equal(h.studio.current.url, url);
+    assert.equal(h.studio.playing, true);
+    assert.equal(h.audio.currentTime, 23);
+    assert.equal(requests, 1);
+  } finally {
+    await h.cleanup();
+  }
+});
+
+test("暂停时拖动音频进度或返回开头，分镜仍跟随音频时间，不触发生成", async () => {
+  let requests = 0;
+  globalThis.fetch = async () => {
+    requests++;
+    return mockResponse();
+  };
+  const h = await mount();
+  try {
+    await h.generate("article");
+    await act(async () => h.studio.start("article", true));
+    await act(async () => h.studio.pause());
+    h.audio.currentTime = 40;
+    await act(async () => h.studio.audioProps.onTimeUpdate());
+    assert.equal(h.frames.at(-1), 1);
+    assert.equal(h.studio.playing, false);
+    h.audio.currentTime = 0;
+    await act(async () => h.studio.audioProps.onTimeUpdate());
+    assert.equal(h.frames.at(-1), 0);
+    assert.equal(requests, 1);
+  } finally {
+    await h.cleanup();
+  }
+});

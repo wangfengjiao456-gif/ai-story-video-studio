@@ -1,8 +1,12 @@
 import React from "react";
+import StoryFrame from "./StoryFrame.jsx";
 import { Play, Pause, ChevronLeft, ChevronRight, Mountain } from "lucide-react";
 export default function Preview({
   project,
   syncLabel,
+  audioRef,
+  audioSelected,
+  audioRange,
   index,
   setIndex,
   playing,
@@ -21,37 +25,15 @@ export default function Preview({
         <span className="badge">{project.ratio}</span>
       </div>
       <p className="muted">让文字，成为看得见的故事。</p>
-      <div className="preview-stage">
-        <div
-          className={`canvas ${project.ratio === "16:9" ? "landscape" : ""}`}
-          data-style={project.style}
-        >
-          <span className="demo-label">演示占位画面 · 非 AI 生成</span>
-          <div className="sun" />
-          <div className="hill hill-back" />
-          <div className="hill hill-front" />
-          <div className="tree tree-one" />
-          <div className="tree tree-two" />
-          <div className="traveler">♟</div>
-          <div className="scene-caption">
-            <span>
-              {project.style} / {project.character.name || "未设置人物"}
-            </span>
-            <Mountain size={26} />
-          </div>
-          <div className="subtitles">
-            {scene ? (
-              <>
-                {project.subtitles !== "zh" && <p>{scene.english}</p>}
-                {project.subtitles !== "en" && (
-                  <p className="zh">{scene.chinese}</p>
-                )}
-              </>
-            ) : (
-              <p>添加分镜，开始你的故事</p>
-            )}
-          </div>
-        </div>
+      <div className="preview-stage v3-preview-stage">
+        <StoryFrame
+          project={project}
+          scene={scene}
+          index={index}
+          audioRef={audioRef}
+          audioRange={audioRange}
+          audioSelected={audioSelected}
+        />
       </div>
       <div className="transport">
         <button
@@ -99,7 +81,7 @@ export default function Preview({
           {syncLabel && <strong className="sync-label">{syncLabel}。 </strong>}
           播放按每镜时长切换。AI 音频请到“AI
           配音”控制。英文朗读请使用“逐句试听”，iPad 上需手动触发。所有画面均为
-          CSS 演示占位。
+          CSS 演示占位或用户上传图片。长句分页按本镜进度估算。
         </p>
       </div>
       <div className="export-note">
