@@ -31,6 +31,8 @@ import {
 import { browserVoiceProvider as voice } from "./services/providers.js";
 import Preview from "./components/Preview.jsx";
 import Field from "./components/Field.jsx";
+import TemplateSettings from "./components/TemplateSettings.jsx";
+import SceneImageSettings from "./components/SceneImageSettings.jsx";
 import AIVoicePanel from "./components/AIVoicePanel.jsx";
 import useVoiceStudio from "./hooks/useVoiceStudio.js";
 import { isFresh } from "./services/aiVoice.js";
@@ -179,6 +181,13 @@ export default function App() {
       `已生成 ${scenes.length} 个分镜；中英文按句序配对，请检查对应关系。`,
     );
   }
+  const editVisualScene = (id, patch) =>
+    setP((prev) => ({
+      ...prev,
+      scenes: prev.scenes.map((scene) =>
+        scene.id === id ? { ...scene, ...patch } : scene,
+      ),
+    }));
   const editScene = (id, patch) => {
     stop();
     update({
@@ -239,7 +248,7 @@ export default function App() {
           </span>
         </a>
         <div className="workspace-label">
-          创作工作台 <span>V2.0</span>
+          创作工作台 <span>V3.0</span>
         </div>
         <nav>
           {tabs.map(([id, label, Icon], i) => (
@@ -533,6 +542,10 @@ export default function App() {
                           }
                           rows={2}
                         />
+                        <SceneImageSettings
+                          scene={s}
+                          onChange={(patch) => editVisualScene(s.id, patch)}
+                        />
                         <div className="scene-bottom">
                           <label>
                             时长{" "}
@@ -625,6 +638,7 @@ export default function App() {
                 )}
                 {tab === "audio" && (
                   <>
+                    <TemplateSettings project={p} onChange={update} />
                     <div className="intro">
                       <AudioLines size={25} />
                       <div>
@@ -670,17 +684,7 @@ export default function App() {
                         }}
                       />
                     </label>
-                    <label className="field">
-                      <span>字幕模式</span>
-                      <select
-                        value={p.subtitles}
-                        onChange={(e) => update({ subtitles: e.target.value })}
-                      >
-                        <option value="both">英文 + 中文 · 双语字幕</option>
-                        <option value="en">英文字幕</option>
-                        <option value="zh">中文字幕</option>
-                      </select>
-                    </label>
+
                     <div className="toolbar">
                       <strong>逐句试听</strong>
                       <button onClick={() => voice.stop()}>停止朗读</button>
@@ -709,6 +713,22 @@ export default function App() {
               </main>
               <Preview
                 project={previewProject}
+                audioRef={ai.audioRef}
+                audioSelected={
+                  ai.selected === "article"
+                    ? isFresh(ai.current, p.english, ai.speed)
+                    : ai.selected === p.scenes[index]?.id &&
+                      isFresh(
+                        ai.current,
+                        p.scenes[index]?.english || "",
+                        ai.speed,
+                      )
+                }
+                audioRange={
+                  ai.selected === "article"
+                    ? ai.timeline.ranges.find((r) => r.index === index)
+                    : null
+                }
                 syncLabel={
                   ai.playing
                     ? ai.timeline.mode === "aligned"
@@ -738,7 +758,7 @@ export default function App() {
           </>
         )}
         <footer>
-          用故事连接语言，用创作发现可能。<span>STORY STUDIO / V2</span>
+          用故事连接语言，用创作发现可能。<span>STORY STUDIO / V3</span>
         </footer>
       </div>
       {message && (
