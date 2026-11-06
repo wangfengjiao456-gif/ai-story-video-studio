@@ -3,7 +3,13 @@ on:
   pull_request:
   push:
     branches:
-      [main, feat/story-studio-v1, feat/elevenlabs-v2, feat/story-studio-v3, feat/story-studio-v3-1]
+      [
+        main,
+        feat/story-studio-v1,
+        feat/elevenlabs-v2,
+        feat/story-studio-v3,
+        feat/story-studio-v3-1,
+      ]
 permissions:
   contents: read
 jobs:
@@ -18,3 +24,6 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run build
+      - name: Install FFmpeg for real encoding tests
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - run: python3 renderer/test_renderer.py

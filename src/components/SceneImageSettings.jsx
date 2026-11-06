@@ -1,6 +1,12 @@
 import React, { useEffect, useRef, useState } from "react";
 import { imageDefaults } from "../presentation/settings.js";
-import { IMAGE_MODEL, IMAGE_QUALITY, imageSize } from "../imageConfig.js";
+import {
+  IMAGE_MODEL,
+  IMAGE_QUALITY,
+  imageSize,
+  imageInput,
+} from "../imageConfig.js";
+import { jsonRequest } from "../video/exportClient.js";
 import { uploadImage } from "../services/images.js";
 export default function SceneImageSettings({
   scene,
@@ -12,6 +18,9 @@ export default function SceneImageSettings({
   const s = { ...imageDefaults(), ...scene },
     [busy, setBusy] = useState(false),
     [error, setError] = useState(""),
+    [confirm, setConfirm] = useState(false),
+    [checking, setChecking] = useState(false),
+    generateLock = useRef(false),
     input = useRef(null),
     version = useRef(0);
   useEffect(
@@ -72,21 +81,35 @@ export default function SceneImageSettings({
       )}
       <div className="ai-actions">
         <button
-          disabled={!!generation?.busy || busy}
-          onClick={() => {
-            if (
-              window.confirm(
-                `预计操作：仅为本分镜${s.imageRef ? "重新生成" : "生成"} 1 张插画。模型 ${IMAGE_MODEL}，${imageSize(project.ratio)}，${IMAGE_QUALITY}。${project.character.referenceImage ? "将向 OpenAI 发送人物参考图，并产生额外输入费用。" : ""}按输入与输出 token 计费，生成前无法精确报价；以 OpenAI 账单为准。失败/超时也可能已计费，不自动重试。是否继续？`,
-              )
-            )
-              generation.generate(s.id);
+          disabled={!!generation?.busy || busy || checking || confirm}
+          onClick={async () => {
+            if (generateLock.current || confirm || generation?.busy) return;
+            generateLock.current = true;
+            setChecking(true);
+            setError("");
+            try {
+              imageInput(project, s);
+              const status = await jsonRequest("/api/service-status", {});
+              if (!status.openai)
+                throw Error(
+                  `当前 ${status.environment} / ${status.branch} 未配置 OPENAI_API_KEY。${status.guidance}`,
+                );
+              setConfirm(true);
+            } catch (err) {
+              setError(err.message);
+            } finally {
+              generateLock.current = false;
+              setChecking(false);
+            }
           }}
         >
-          {generation?.busy === s.id
-            ? "AI 生成中…"
-            : s.imageRef
-              ? "AI 重新生成配图"
-              : "AI 生成配图"}
+          {checking
+            ? "检查当前分支…"
+            : generation?.busy === s.id
+              ? "AI 生成中…"
+              : s.imageRef
+                ? "AI 重新生成配图"
+                : "AI 生成配图"}
         </button>
         {s.imageRef && (
           <>
@@ -120,6 +143,43 @@ export default function SceneImageSettings({
           onChange={upload}
         />
       </div>
+      {confirm && (
+        <section
+          className="recovery-panel"
+          role="alertdialog"
+          aria-label="确认单张图片生成费用"
+        >
+          <p>
+            仅为本分镜生成 1 张，模型 {IMAGE_MODEL}，{imageSize(project.ratio)}
+            ，{IMAGE_QUALITY}。
+            {project.character.referenceImage
+              ? "将发送人物参考图，产生额外输入费用。"
+              : ""}
+            按输入和输出 token 计费；失败或超时也可能已计费，不会自动重试。
+          </p>
+          <button
+            disabled={!!generation?.busy}
+            onClick={async () => {
+              if (generateLock.current) return;
+              generateLock.current = true;
+              setConfirm(false);
+              try {
+                await generation.generate(s.id);
+              } finally {
+                generateLock.current = false;
+              }
+            }}
+          >
+            确认生成这一张
+          </button>
+          <button onClick={() => setConfirm(false)}>取消</button>
+        </section>
+      )}
+      {generation?.target === s.id && generation.error && (
+        <p role="alert" className="validation-error">
+          {generation.error}
+        </p>
+      )}
       {error && (
         <p role="alert" className="validation-error">
           {error}

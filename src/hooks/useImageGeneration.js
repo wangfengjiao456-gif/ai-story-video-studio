@@ -9,12 +9,14 @@ export default function useImageGeneration(project, onApply) {
     request = useRef(null);
   latest.current = project;
   apply.current = onApply;
+  const [target, setTarget] = useState(null);
   const [busy, setBusy] = useState(null),
     [error, setError] = useState(""),
     [pending, setPending] = useState(null);
   useEffect(() => () => request.current?.abort(), []);
   async function generate(id) {
     if (request.current) return;
+    setTarget(id);
     const p = latest.current,
       scene = p.scenes.find((s) => s.id === id);
     if (!scene) return;
@@ -59,6 +61,7 @@ export default function useImageGeneration(project, onApply) {
   }
   return {
     busy,
+    target,
     error,
     pending,
     generate,

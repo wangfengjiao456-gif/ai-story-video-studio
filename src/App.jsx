@@ -31,6 +31,8 @@ import {
 import { browserVoiceProvider as voice } from "./services/providers.js";
 import Preview from "./components/Preview.jsx";
 import Field from "./components/Field.jsx";
+import VideoStudioPanel from "./components/VideoStudioPanel.jsx";
+import ServiceStatus from "./components/ServiceStatus.jsx";
 import CharacterReference from "./components/CharacterReference.jsx";
 import useImageGeneration from "./hooks/useImageGeneration.js";
 import TemplateSettings from "./components/TemplateSettings.jsx";
@@ -45,6 +47,7 @@ const tabs = [
   ["characters", "角色与画风", Users],
   ["audio", "配音与字幕", AudioLines],
   ["ai", "AI 配音", Sparkles],
+  ["video", "视频预览与导出", Film],
 ];
 function load() {
   let result;
@@ -78,8 +81,11 @@ export default function App() {
   const [blocked, setBlocked] = useState(
     !!startup.recovery && !startup.project,
   );
+  const [videoEpoch, setVideoEpoch] = useState(0);
+  const videoPause = useRef(null);
   const ai = useVoiceStudio(p, {
     onStart: () => {
+      videoPause.current?.();
       setPlaying(false);
       voice.stop();
     },
@@ -131,6 +137,7 @@ export default function App() {
     setPlaying(false);
     voice.stop();
     ai.pause();
+    videoPause.current?.();
   };
   useEffect(() => {
     if (!voice.available()) return;
@@ -238,6 +245,7 @@ export default function App() {
         return;
       stop();
       ai.reset();
+      setVideoEpoch((v) => v + 1);
       imageGeneration.reset();
       setP(project);
       setBlocked(false);
@@ -399,6 +407,17 @@ export default function App() {
                     秒
                   </span>
                 </div>
+                <VideoStudioPanel
+                  key={videoEpoch}
+                  pauseRef={videoPause}
+                  project={p}
+                  ai={ai}
+                  hidden={tab !== "video"}
+                  onStart={stop}
+                  onFrame={setIndex}
+                  onTimingChange={(videoTiming) => update({ videoTiming })}
+                />
+                {tab === "ai" && <ServiceStatus />}
                 <AIVoicePanel project={p} studio={ai} hidden={tab !== "ai"} />
                 {tab === "article" && (
                   <>

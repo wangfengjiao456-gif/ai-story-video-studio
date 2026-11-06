@@ -108,6 +108,24 @@ export function validateProject(p, { recovery = false } = {}) {
     ])
       str(scene[key], `分镜 ${i + 1} ${label}`, TEXT_LIMIT);
   });
+  if (p.videoTiming !== undefined && p.videoTiming !== null) {
+    const t = p.videoTiming;
+    if (
+      typeof t.signature !== "string" ||
+      t.signature.length > 100 ||
+      !Array.isArray(t.boundaries) ||
+      t.boundaries.length !== p.scenes.length + 1 ||
+      t.boundaries[0] !== 0 ||
+      t.boundaries.some(
+        (v, i) =>
+          !Number.isFinite(v) ||
+          v < 0 ||
+          v > 600 ||
+          (i && v <= t.boundaries[i - 1]),
+      )
+    )
+      throw Error("手动视频时间轴无效。");
+  }
   validatePresentation(p);
   for (const scene of p.scenes) validateImageRef(scene.imageRef);
   validateImageRef(p.character.referenceImage);
@@ -130,6 +148,14 @@ export function serializeProject(project) {
   } = project;
   const raw = JSON.stringify({
     ...presentationRecord(project),
+    ...(project.videoTiming
+      ? {
+          videoTiming: {
+            signature: project.videoTiming.signature,
+            boundaries: project.videoTiming.boundaries,
+          },
+        }
+      : {}),
     version,
     title,
     english,

@@ -237,3 +237,48 @@ npm run build
 ### 测试与限制
 
 `npm test` 与 `npm run build` 必须通过。新增 SDK 合约测试覆盖单张调用、人物参考图编辑、费用确认、错误映射、旧图保护、原图字节保留、三种画幅布局及 PNG 共享渲染计划；状态测试覆盖无自动生成、单镜应用和迟到响应。既有 ElevenLabs 模拟回归保持不变，真实 MP3 与真机 Safari 仍需按步骤人工验收。当前无真实 OPENAI_API_KEY 测试证据，因此只能确认代码接入和模拟测试，不宣称真实生图接入成功。
+
+## V3.1 完整视频流程修复（当前功能分支）
+
+### 分支变量与 AI 调用诊断
+
+ElevenLabs 服务端和固定配置与成功使用的 V2 保持一致，仍只读取服务器 `ELEVENLABS_API_KEY`；没有将旧分支的 Key 复制进代码。新增 `GET /api/service-status`，只返回当前分支、环境和三个服务是否配置的布尔值。到“AI 配音”或“视频预览与导出”点击“检查当前分支配置”。
+
+如果显示 V3.1 Preview 未配置，请在 Vercel → Settings → Environment Variables 将原变量范围覆盖 **feat/story-studio-v3-1** 或全部 Preview，并重新部署当前 Preview；此前仅作用于 feat/elevenlabs-v2 的变量不会继承。不添加 VITE_ 前缀，不修改 Production Key。这里没有 Vercel 账户环境变量管理权限，不能声称已经代你修好变量范围。
+
+插画按钮先验证当前分镜输入并检查当前部署 OpenAI 配置，再显示一次页内费用确认；确认立即锁定请求，双击不会重复生成。生成中、对应分镜的错误原因就地显示，失败保留旧图，不会自动重试或批量消耗额度。
+
+### 连续预览 → 真实 MP4
+
+左侧新增“视频预览与导出”，原文章、分镜、上传图片、单镜预览与配音页面保留。
+
+1. 使用自己的文章及分镜，每镜先有图片。选择当前整篇 ElevenLabs MP3 或全部逐镜 MP3；也可导入此前下载的整篇 MP3，在 Key 未覆盖当前分支时继续制作。导入文件来源和实际语速需人工确认。
+2. 点击“准备完整视频”，读取真实 MP3 metadata 时长；整篇优先用可验证 API 字符对齐，没有对齐则标明词数估算。逐镜按各 MP3 真实时长连续安排。
+3. 完整预览从第 1 镜连续至最后，支持暂停、继续、重播与全局进度拖动。画面使用固定 9:16 / 1080×1920，可能与原编辑预览的其他画幅不同。
+4. 时间轴量化到 30fps；整镜字幕边界与长字幕页共用一份帧时间轴，导出逐页烘焙同一画布，避免预览与视频另算时间。长字幕页内翻页仍是比例估算，不冒充 API 对齐。
+5. “手动微调字幕切镜时间”可修改内部分镜边界，保存进项目 `videoTiming`。更改文本、音频或生成语速后会拒用过期音频/旧时轴；JSON 不保存 MP3，本地页面刷新后需重新生成或导入音频。
+6. 点击“导出真实 MP4”，PNG 与 MP3 直接上传到独立渲染服务，显示上传/FFmpeg 进度；失败显示原因，取消不会删除项目。完成后提供原生视频播放器和下载，支持 Range 拖动与 iPad 分享到文件。
+
+导出开始后是固定项目/音频快照；继续编辑不会修改正在导出的任务，新修改需要重新导出。图片或 MP3 缺失、过期、无法读取真实时长、超过任务限制时拒绝导出，不生成静音假视频。MP4 结果保留约一小时，需及时下载。
+
+### 必需部署架构
+
+真实 MP4 使用独立长运行 FFmpeg 容器，不强塞进 Vercel Functions，也不依赖 iPad 的 wasm 编码能力。部署步骤、鉴权、CORS、资源与限制见 [renderer/README.md](renderer/README.md)。**只部署 Vercel 前端不能启用 MP4**；必须另外部署 worker，并在当前 Preview 设置服务器端 `RENDERER_URL` 和 `RENDERER_API_KEY`，worker 设置同一密钥及 `ALLOWED_ORIGINS` 精确允许当前 Preview 来源。现有 ELEVENLABS_API_KEY、OPENAI_API_KEY 的 Preview 分支范围也需要所有者检查。未部署时明确显示“MP4 渲染服务尚未部署”，不能说线上导出已经可用。
+
+Production 未更改。先用 Preview、真实 MP3 和图片验证部署；未经用户确认不发起收费调用。独立服务只接收渲染媒体，不接收 AI 密钥。
+
+### 测试及 10 镜回归样本
+
+```sh
+npm test
+npm run build
+python3 renderer/test_renderer.py
+# 本机安装 FFmpeg/ffprobe（含 libflite）和中文字体后：
+node scripts/render-regression.mjs
+```
+
+新增测试覆盖：配置状态、代理不泄露服务密钥、统一时间轴/手动微调/保存、缺图/过期 MP3 拒绝、页内确认防双击；Python 测试真实跑 HTTP 上传、H.264/AAC 编码及 Range 下载。回归脚本用网站同一 framePlan/paintFrame 生成十镜双语字幕帧，再用本地 Flite 合成英文 MP3、FFmpeg 合成标准 MP4。不会调用 ElevenLabs 或 OpenAI。
+
+《每天进步一点就够了》的用户原项目仅在浏览器，已获用户同意先使用**明确标注的十镜合成回归样本**。程序插画和 Flite 语音不是用户图片或 ElevenLabs 结果；样本成功不等于用户真实项目、收费 API 或 iPad Safari 已验收。需要部署真实 worker 后，在用户浏览器原项目上完成一轮实际测试。
+
+Preview 的视频页面底部提供“离线编码回归证据”，可直接播放/下载已验证的十镜合成 MP4；文件也位于 public/regression。它不是用户原项目，不能用它替代真实 API / 用户项目验收。

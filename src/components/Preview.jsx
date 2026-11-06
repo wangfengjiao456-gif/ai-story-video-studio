@@ -86,7 +86,7 @@ export default function Preview({
       </div>
       <div className="export-note">
         <span>MP4 视频导出</span>
-        <span className="badge">待开发</span>
+        <span className="badge">到左侧“视频预览与导出”</span>
       </div>
     </aside>
   );
