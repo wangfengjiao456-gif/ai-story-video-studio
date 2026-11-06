@@ -1,6 +1,6 @@
 import contextlib,json,os,shutil,socket,struct,subprocess,sys,tempfile,time,unittest,urllib.request,urllib.error,zlib
 from pathlib import Path
-from render import validate_manifest,render,probe
+from render import validate_manifest,render,probe,progress_value
 
 def png(path,color=(60,110,75)):
     def chunk(t,b):return struct.pack('>I',len(b))+t+b+struct.pack('>I',zlib.crc32(t+b)&0xffffffff)
@@ -8,6 +8,11 @@ def png(path,color=(60,110,75)):
     path.write_bytes(b'\x89PNG\r\n\x1a\n'+chunk(b'IHDR',struct.pack('>IIBBBBB',1080,1920,8,2,0,0,0))+chunk(b'IDAT',zlib.compress(raw))+chunk(b'IEND',b''))
 
 class RendererTests(unittest.TestCase):
+    def test_ffmpeg_progress_accepts_initial_na(self):
+        for line in ['out_time_us=N/A\n','out_time_us=nan\n','out_time_us=-1','progress=continue']:
+            self.assertIsNone(progress_value(line,10))
+        self.assertEqual(progress_value('out_time_us=5000000\n',10),54)
+
     def test_rejects_invalid_manifest(self):
         for m in [{},{'version':1,'width':1080,'height':1920,'fps':30,'frames':[{'frames':-1}],'audios':[{'duration':1}]}]:
             with self.assertRaises(ValueError):validate_manifest(m)

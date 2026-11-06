@@ -30,6 +30,13 @@ def check_png(path):
     with open(path,'rb') as f:head=f.read(24)
     if len(head)!=24 or head[:8]!=b'\x89PNG\r\n\x1a\n' or struct.unpack('>II',head[16:24])!=(1080,1920):raise ValueError('字幕帧必须是 1080×1920 PNG。')
 
+def progress_value(line,total):
+    if not line.startswith('out_time_us='):return None
+    try:value=float(line.split('=',1)[1].strip())
+    except (ValueError,IndexError):return None
+    if not math.isfinite(value) or value<0:return None
+    return min(99,10+int(value/1e6/total*89))
+
 def render(directory,manifest,progress=lambda n:None,cancelled=lambda:False,process_callback=lambda p:None):
     directory=Path(directory);validate_manifest(manifest)
     for i in range(len(manifest['frames'])):check_png(directory/f'frame-{i}.png')
@@ -53,9 +60,14 @@ def render(directory,manifest,progress=lambda n:None,cancelled=lambda:False,proc
         try:
             for line in process.stdout:
                 if cancelled():process.kill();raise ValueError('导出已取消。')
-                if line.startswith('out_time_us='):progress(min(99,10+int(float(line.split('=')[1])/1e6/total*89)))
+                value=progress_value(line,total)
+                if value is not None:progress(value)
             if process.wait()!=0:raise ValueError('FFmpeg 编码失败，请检查图片/音频或服务内存。')
-        finally:timer.cancel();process_callback(None)
+        finally:
+            timer.cancel()
+            if process.poll() is None:process.kill();process.wait(timeout=10)
+            if process.stdout:process.stdout.close()
+            process_callback(None)
     info=probe(directory/'video.mp4');streams=info['streams'];v=next(s for s in streams if s['codec_type']=='video');a=next(s for s in streams if s['codec_type']=='audio')
     if v['codec_name']!='h264' or a['codec_name']!='aac' or v['width']!=1080 or v['height']!=1920:raise ValueError('输出编码验证失败。')
     progress(100);return {'duration':float(info['format']['duration']),'videoCodec':'h264','audioCodec':'aac','width':1080,'height':1920}
