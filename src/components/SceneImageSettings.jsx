@@ -57,7 +57,7 @@ export default function SceneImageSettings({
       if (current === version.current)
         onChange({ imageRef, ...imageDefaults() });
     } catch (err) {
-      setError(err.message);
+      if (current === version.current) setError(err.message);
     } finally {
       if (current === version.current) setBusy(false);
     }
@@ -128,7 +128,7 @@ export default function SceneImageSettings({
           </>
         )}
         <button disabled={busy} onClick={() => input.current.click()}>
-          {busy ? "正在检查与压缩…" : s.imageRef ? "替换图片" : "上传图片"}
+          {busy ? "正在检查图片…" : s.imageRef ? "替换图片" : "上传图片"}
         </button>
         {s.imageRef && (
           <button
@@ -193,8 +193,9 @@ export default function SceneImageSettings({
       )}
       <p className="muted">
         支持 JPG / PNG / WebP，最多 8 MB、1,600
-        万像素。保留上传原始字节；画幅、缩放和焦点只改变显示，不会反复裁剪或重编码。项目总量仍限
-        5 MB，大图会导致保存超限，请使用较小原图或下载图片备份。
+        万像素。保留上传原始字节；画幅、缩放和焦点只改变显示，不会反复裁剪或重编码。浏览器本地保存限
+        5 MB，JSON 文件备份限 50
+        MB。大图请保留原件并使用较小副本，刷新前务必完成文件备份。
       </p>
       <p className="muted">
         AI

@@ -182,9 +182,12 @@ test("completed metadata alone is insufficient: validate codecs/duration and act
         fetchImpl: w.fetchImpl,
         pollMs: 1,
       }),
-      /下载|验证/,
+      /下载|验证|过期/,
     );
-    assert.ok(w.calls.some((c) => c.method === "DELETE"));
+    assert.equal(
+      w.calls.some((c) => c.method === "DELETE"),
+      options.head !== false,
+    );
   }
 });
 test("upload/network errors cancel old tasks; explicit retries create a new job without hidden retries", async () => {

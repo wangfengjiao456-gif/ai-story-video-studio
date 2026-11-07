@@ -25,6 +25,7 @@ const Panel = (await import(pathToFileURL(join(temp, "Panel.mjs")))).default;
 test("latest MP3 import wins; unmount revokes its URL without late callbacks or undefined cleanup state", async () => {
   const original = {
     document: globalThis.document,
+    window: globalThis.window,
     Audio: globalThis.Audio,
     create: URL.createObjectURL,
     revoke: URL.revokeObjectURL,
@@ -56,30 +57,30 @@ test("latest MP3 import wins; unmount revokes its URL without late callbacks or 
     removeEventListener() {}
   }
   globalThis.Audio = AudioMock;
-  globalThis.document = {
+  globalThis.window = new EventTarget();
+  globalThis.document = Object.assign(new EventTarget(), {
+    visibilityState: "visible",
     createElement: () => ({
       getContext: () => ({ measureText: () => ({ width: 10 }) }),
     }),
-  };
+  });
   URL.createObjectURL = (file) => `blob:${file.name}`;
   URL.revokeObjectURL = (url) => revoked.push(url);
   let renderer;
   try {
     const project = initialProject();
     project.scenes = splitArticle(project.english, project.chinese);
+    const props = {
+      project,
+      ai: { assets: {}, speed: 0.8, pause() {} },
+      onTimingChange() {},
+      onFrame() {},
+    };
     await act(async () => {
-      renderer = create(
-        React.createElement(Panel, {
-          project,
-          ai: { assets: {}, speed: 0.8, pause() {} },
-          onTimingChange() {},
-          onFrame() {},
-        }),
-        {
-          createNodeMock: (e) =>
-            e.type === "audio" ? new AudioMock() : { click() {} },
-        },
-      );
+      renderer = create(React.createElement(Panel, props), {
+        createNodeMock: (e) =>
+          e.type === "audio" ? new AudioMock() : { click() {} },
+      });
     });
     const input = renderer.root
       .findAllByType("input")
@@ -112,12 +113,49 @@ test("latest MP3 import wins; unmount revokes its URL without late callbacks or 
       .find((x) => x.props.controls);
     assert.equal(inspector.props.src, "blob:second.mp3");
     assert.ok(revoked.includes("blob:first.mp3"));
+    // Starting prepare, then switching source while metadata is pending must not apply old results.
+    const article = {
+      url: "blob:generated",
+      text: project.english,
+      speed: 0.8,
+      blob: new Blob(["mock"]),
+      duration: null,
+    };
+    await act(async () =>
+      renderer.update(
+        React.createElement(Panel, {
+          ...props,
+          ai: { ...props.ai, assets: { article } },
+        }),
+      ),
+    );
+    await act(async () =>
+      renderer.root
+        .findByType("select")
+        .props.onChange({ target: { value: "article" } }),
+    );
+    let preparing;
+    await act(async () => {
+      preparing = renderer.root
+        .findAllByType("button")
+        .find((b) => b.props.children === "准备完整视频")
+        .props.onClick();
+      await wait("blob:generated");
+    });
+    await act(async () =>
+      renderer.root
+        .findByType("select")
+        .props.onChange({ target: { value: "scenes" } }),
+    );
+    await act(async () => await preparing);
+    assert.ok(!JSON.stringify(renderer.toJSON()).includes("full-video-frame"));
     await act(async () => renderer.unmount());
     renderer = null;
     assert.ok(revoked.includes("blob:second.mp3"));
   } finally {
     if (renderer) await act(async () => renderer.unmount());
     globalThis.document = original.document;
+    globalThis.window = original.window;
     globalThis.Audio = original.Audio;
     URL.createObjectURL = original.create;
     URL.revokeObjectURL = original.revoke;

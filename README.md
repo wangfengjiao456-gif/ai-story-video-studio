@@ -1,5 +1,7 @@
 # AI Story Video Studio V3.1
 
+iPad 使用者请阅读 [简体中文操作指南](IPAD_GUIDE.md)，包含备份、Render/Vercel 配置和第一次 MP4 导出。
+
 外部 MP3 真实逐句对齐、独立起止时间编辑和 MP4 服务部署，请先阅读 [DEPLOYMENT.md](DEPLOYMENT.md)。仅部署 Vercel 前端不会启动 FFmpeg；未通过真实服务连接检查时导出按钮禁用。
 
 中文界面的故事视频创作工作台，使用 React + Vite；V1 功能无需付费 API，V2 的 ElevenLabs 配音通过 Vercel 服务端调用。桌面为左侧导航、中央编辑、右侧预览布局；iPad 与手机会自动适配。

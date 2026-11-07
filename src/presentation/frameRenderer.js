@@ -207,3 +207,14 @@ export function paintFrame(ctx, plan, pageIndex, image) {
     plan.chineseColor,
   );
 }
+
+// Keep export text in the same CSS/language inheritance context as the visible preview.
+// Detached canvases can select a different CJK font/weight even with the same ctx.font.
+export function createExportCanvas(doc = globalThis.document) {
+  const canvas = doc.createElement("canvas");
+  canvas.width = 1080;
+  canvas.height = 1920;
+  canvas.hidden = true;
+  doc.body.appendChild(canvas);
+  return canvas;
+}

@@ -42,4 +42,7 @@ jobs:
             work/e2e/*.log
             work/mp4-regression/browser-export.mp4
             work/deployment-verification/preview-render.mp4
+            work/mp4-regression/frame-evidence.json
+            work/mp4-regression/frame-verification.json
+            work/mp4-regression/expected-scene-*.png
           retention-days: 7

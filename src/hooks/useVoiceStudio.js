@@ -7,8 +7,11 @@ import {
   articleTimeline,
   indexAtTime,
 } from "../services/aiVoice.js";
-export default function useVoiceStudio(project, { onStart, onFrame }) {
-  const [speed, setSpeed] = useState(DEFAULT_SPEED),
+export default function useVoiceStudio(
+  project,
+  { onStart, onFrame, onSpeedChange },
+) {
+  const [speed, updateSpeed] = useState(project.aiSpeed ?? DEFAULT_SPEED),
     [assets, setAssets] = useState({}),
     [busy, setBusy] = useState(null),
     [error, setError] = useState(""),
@@ -17,17 +20,24 @@ export default function useVoiceStudio(project, { onStart, onFrame }) {
   const audioRef = useRef(null),
     assetsRef = useRef({}),
     projectRef = useRef(project),
-    callbacks = useRef({ onStart, onFrame }),
+    callbacks = useRef({ onStart, onFrame, onSpeedChange }),
     request = useRef(null),
     sequence = useRef(null),
     selectedRef = useRef(null),
     speedRef = useRef(speed),
     raf = useRef(null);
   projectRef.current = project;
-  callbacks.current = { onStart, onFrame };
+  callbacks.current = { onStart, onFrame, onSpeedChange };
   speedRef.current = speed;
   assetsRef.current = assets;
   selectedRef.current = selected;
+  useEffect(() => {
+    updateSpeed(project.aiSpeed ?? DEFAULT_SPEED);
+  }, [project.aiSpeed]);
+  function setSpeed(value) {
+    updateSpeed(value);
+    callbacks.current.onSpeedChange?.(value);
+  }
   const textFor = (key, p = projectRef.current) =>
     key === "article"
       ? p.english

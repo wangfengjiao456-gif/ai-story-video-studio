@@ -1,3 +1,4 @@
+import { isFresh } from "../services/aiVoice.js";
 import {
   audioFingerprint,
   assertPreparedAudio,
@@ -9,8 +10,14 @@ import {
   renderVideo,
   cancelRender,
   jsonRequest,
+  recoverVideoDownload,
+  renderExpired,
 } from "../video/exportClient.js";
-import { paintFrame, FONT_STACK } from "../presentation/frameRenderer.js";
+import {
+  paintFrame,
+  FONT_STACK,
+  createExportCanvas,
+} from "../presentation/frameRenderer.js";
 import { sceneCues, validateCues } from "../video/alignment.js";
 import { timingSignature } from "../video/timeline.js";
 import ServiceStatus from "./ServiceStatus.jsx";
@@ -41,7 +48,10 @@ export default function VideoStudioPanel({
     [playing, setPlaying] = useState(false),
     [progress, setProgress] = useState(null),
     [result, setResult] = useState(null),
-    [exportFailed, setExportFailed] = useState(false);
+    [exportFailed, setExportFailed] = useState(false),
+    [pendingDownload, setPendingDownload] = useState(null),
+    [recoveringDownload, setRecoveringDownload] = useState(false),
+    [clock, setClock] = useState(Date.now);
   const audio = useRef(null),
     inspector = useRef(null),
     startingInspector = useRef(false),
@@ -58,7 +68,11 @@ export default function VideoStudioPanel({
     importEpoch = useRef(0),
     importController = useRef(null),
     inputContext = useRef(null),
-    pendingSeek = useRef(null);
+    pendingSeek = useRef(null),
+    prepareEpoch = useRef(0),
+    prepareController = useRef(null),
+    recoveryLock = useRef(false),
+    recoveryController = useRef(null);
   inputContext.current = JSON.stringify([
     project.english,
     project.scenes.map((s) => s.english),
@@ -70,6 +84,20 @@ export default function VideoStudioPanel({
     project.english,
     ai.speed,
   ]);
+  const currentAssets = useRef(ai.assets);
+  currentAssets.current = ai.assets;
+  const preparationContext = useRef(null);
+  const preparationKey = JSON.stringify([
+    source,
+    inputContext.current,
+    imported?.fingerprint,
+    project.scenes.map((s) => s.id),
+  ]);
+  if (preparationContext.current !== preparationKey) {
+    preparationContext.current = preparationKey;
+    prepareEpoch.current++;
+  }
+  useEffect(() => () => prepareController.current?.abort(), [preparationKey]);
   const measure = useMemo(() => {
     if (typeof document === "undefined") return undefined;
     const ctx = document.createElement("canvas").getContext("2d");
@@ -142,8 +170,11 @@ export default function VideoStudioPanel({
       audio.current?.pause();
       inspector.current?.pause();
       controller.current?.abort();
+      recoveryController.current?.abort();
       alignmentContext.current = null;
       importEpoch.current++;
+      prepareEpoch.current++;
+      prepareController.current?.abort();
       importController.current?.abort();
       if (pendingSeek.current)
         audio.current?.removeEventListener(
@@ -214,8 +245,19 @@ export default function VideoStudioPanel({
     onPreviewFrame?.(frame);
   }, [frame, onPreviewFrame]);
   useEffect(() => {
-    onPlaybackChange?.({ ready: !!timeline, playing });
-  }, [!!timeline, playing, onPlaybackChange]);
+    onPlaybackChange?.({
+      ready: !!timeline,
+      playing,
+      rendering: !!progress && progress.percent < 100,
+      pendingDownload: !!pendingDownload,
+    });
+  }, [
+    !!timeline,
+    playing,
+    !!progress && progress.percent < 100,
+    onPlaybackChange,
+    !!pendingDownload,
+  ]);
   useEffect(() => {
     if (!transportRef) return;
     transportRef.current = {
@@ -236,7 +278,33 @@ export default function VideoStudioPanel({
       transportRef.current = null;
     };
   });
+  useEffect(() => {
+    const suspend = () => {
+      timeUpdate();
+      pause();
+    };
+    const visibility = () => {
+      setClock(Date.now());
+      if (document.visibilityState === "hidden") suspend();
+      else timeUpdate();
+    };
+    document.addEventListener("visibilitychange", visibility);
+    window.addEventListener("pagehide", suspend);
+    window.addEventListener("pageshow", timeUpdate);
+    return () => {
+      document.removeEventListener("visibilitychange", visibility);
+      window.removeEventListener("pagehide", suspend);
+      window.removeEventListener("pageshow", timeUpdate);
+    };
+  }, []);
+  useEffect(() => {
+    if (hidden) pause();
+  }, [hidden]);
   function saveCues(cues, source = "manual") {
+    if (!isFresh(imported, project.english, ai.speed))
+      throw Error(
+        "英文或语速已变化，请重新导入当前 MP3 后再校准；原时间轴未覆盖。",
+      );
     if (
       !imported ||
       !validateCues(cues, project.scenes.length, imported.duration)
@@ -299,8 +367,11 @@ export default function VideoStudioPanel({
     }
   }
   async function prepare() {
-    if (preparing) return;
+    if (preparing || prepareController.current) return;
+    const request = new AbortController();
+    prepareController.current = request;
     pause();
+    const epoch = ++prepareEpoch.current;
     setPreparing(true);
     setError("");
     try {
@@ -316,16 +387,27 @@ export default function VideoStudioPanel({
         if (!assets[key]) throw Error("尚无可用音频，请先生成或导入 MP3。");
         assets[key] = {
           ...assets[key],
-          duration: await audioDuration(assets[key]),
+          duration: await audioDuration(assets[key], {
+            signal: request.signal,
+          }),
         };
       }
+      if (epoch !== prepareEpoch.current) return;
+      if (
+        source !== "imported" &&
+        keys.some((key) => assets[key].url !== currentAssets.current[key]?.url)
+      )
+        throw Error("读取期间配音已替换，请重新准备视频。");
       buildVideoTimeline(project, assets, ai.speed, mode, measure);
       setPrepared({ assets, speed: ai.speed, source: mode });
       setTime(0);
       cursor.current = 0;
     } catch (err) {
-      setError(err.message);
+      if (epoch === prepareEpoch.current && err.name !== "AbortError")
+        setError(err.message);
     } finally {
+      if (prepareController.current === request)
+        prepareController.current = null;
       setPreparing(false);
     }
   }
@@ -334,6 +416,8 @@ export default function VideoStudioPanel({
     e.target.value = "";
     if (!file) return;
     pause();
+    prepareEpoch.current++;
+    prepareController.current?.abort();
     const epoch = ++importEpoch.current,
       context = inputContext.current;
     importController.current?.abort();
@@ -485,8 +569,48 @@ export default function VideoStudioPanel({
       setCheckingRenderer(false);
     }
   }
+  useEffect(() => {
+    if (!result && !pendingDownload) return;
+    const tick = () => setClock(Date.now());
+    const timer = setInterval(tick, 30000);
+    window.addEventListener("pageshow", tick);
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener("pageshow", tick);
+    };
+  }, [result, pendingDownload]);
+  async function restoreDownload() {
+    if (!pendingDownload || recoveryLock.current || busyRef.current) return;
+    recoveryLock.current = true;
+    setRecoveringDownload(true);
+    setError("");
+    const request = new AbortController();
+    recoveryController.current = request;
+    try {
+      const verified = await recoverVideoDownload(pendingDownload, {
+        signal: request.signal,
+      });
+      setResult(verified);
+      setPendingDownload(null);
+      setExportFailed(false);
+      setProgress({
+        percent: 100,
+        message: "已恢复下载检查，实际 MP4 可下载；没有重新渲染。",
+      });
+    } catch (e) {
+      if (e.terminalDownload) {
+        setPendingDownload(null);
+        setExportFailed(true);
+      }
+      if (e.name !== "AbortError") setError(e.message);
+    } finally {
+      recoveryLock.current = false;
+      setRecoveringDownload(false);
+      recoveryController.current = null;
+    }
+  }
   async function exportMp4() {
-    if (!timeline || busyRef.current) return;
+    if (!timeline || busyRef.current || recoveryLock.current) return;
     if (timeline.precision === "estimated") {
       setError(
         "整篇配音尚无可验证时间戳，不能按估算时间导出。请确认全部起止时间，或下载 MP3 后导入并执行逐句对齐，也可使用逐镜 MP3。",
@@ -503,9 +627,7 @@ export default function VideoStudioPanel({
     controller.current = c;
     job.current = null;
     const snapshot = timeline;
-    const temp = document.createElement("canvas");
-    temp.width = 1080;
-    temp.height = 1920;
+    const temp = createExportCanvas();
     const makeFrame = async (f) => {
       let image;
       if (exportImage.current?.src === f.plan.scene.imageRef.dataUrl)
@@ -519,7 +641,12 @@ export default function VideoStudioPanel({
         });
         exportImage.current = { src: f.plan.scene.imageRef.dataUrl, image };
       }
-      paintFrame(temp.getContext("2d"), f.plan, f.page, image);
+      const ctx = temp.getContext("2d");
+      if (!ctx)
+        throw Error(
+          "画布内存不足或浏览器无法编码，请先备份项目，减小插画尺寸后重试。",
+        );
+      paintFrame(ctx, f.plan, f.page, image);
       return new Promise((resolve, reject) =>
         temp.toBlob(
           (blob) =>
@@ -535,11 +662,13 @@ export default function VideoStudioPanel({
         onJob: (value) => (job.current = value),
       });
       setResult(output);
+      setPendingDownload(null);
       setProgress({
         percent: 100,
         message: "MP4 已完成并通过 H.264 / AAC 验证。",
       });
     } catch (err) {
+      if (err.recoverableVideo) setPendingDownload(err.recoverableVideo);
       setError(
         err.name === "AbortError"
           ? "导出已取消，项目与音频未删除。"
@@ -551,6 +680,7 @@ export default function VideoStudioPanel({
       busyRef.current = false;
       controller.current = null;
       exportImage.current = null;
+      temp.remove();
     }
   }
   function timing(index, field, value) {
@@ -589,6 +719,15 @@ export default function VideoStudioPanel({
         </div>
       </div>
       <ServiceStatus />
+      <p>
+        <a
+          href="https://github.com/wangfengjiao456-gif/ai-story-video-studio/blob/feat/story-studio-v3-1/IPAD_GUIDE.md"
+          target="_blank"
+          rel="noreferrer"
+        >
+          iPad 操作与首次配置指南
+        </a>
+      </p>
       <div className="note">
         <p>
           MP4 服务：
@@ -890,7 +1029,7 @@ export default function VideoStudioPanel({
           </details>
           <button
             className="primary"
-            disabled={busyRef.current || !rendererReady}
+            disabled={busyRef.current || recoveringDownload || !rendererReady}
             onClick={exportMp4}
           >
             {exportFailed && !busyRef.current
@@ -917,6 +1056,26 @@ export default function VideoStudioPanel({
           )}
         </div>
       )}
+      {pendingDownload && (
+        <section className="note" role="status">
+          <p>
+            视频已编码，但下载检查未完成。已完成文件没有删除，可仅恢复下载检查，不重新上传或渲染。请先恢复检查并下载；刷新或关闭页面会丢失本次任务入口。
+          </p>
+          <button
+            disabled={
+              recoveringDownload ||
+              busyRef.current ||
+              renderExpired(pendingDownload, clock)
+            }
+            onClick={restoreDownload}
+          >
+            {recoveringDownload ? "检查下载中…" : "恢复下载检查（不重新渲染）"}
+          </button>
+          {renderExpired(pendingDownload, clock) && (
+            <p>此任务已过期，请重新导出。</p>
+          )}
+        </section>
+      )}
       {result && (
         <section className="note">
           <strong>已完成的 MP4 · 导出时项目快照</strong>
@@ -927,14 +1086,20 @@ export default function VideoStudioPanel({
             crossOrigin="anonymous"
             src={result.url}
           />
-          <a
-            href={result.download}
-            target="_blank"
-            rel="noreferrer"
-            referrerPolicy="no-referrer"
-          >
-            下载标准 MP4
-          </a>
+          {renderExpired(result, clock) ? (
+            <p className="validation-error">
+              此视频下载已过期，请重新导出。项目与原音频未删除。
+            </p>
+          ) : (
+            <a
+              href={result.download}
+              target="_blank"
+              rel="noreferrer"
+              referrerPolicy="no-referrer"
+            >
+              下载标准 MP4
+            </a>
+          )}
           <p>
             服务端结果保留约 1 小时，请及时下载。iPad
             如打开播放页，可用分享菜单存储到文件。

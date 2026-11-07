@@ -175,10 +175,44 @@ export async function prepareReferenceFile(file) {
 }
 // V4 integration point: providers may later return a validated imageRef; no AI image generation exists in V3.
 
-export async function uploadImage(file) {
+export async function decodeUploadedImage(file) {
+  const url = URL.createObjectURL(file),
+    image = new Image();
+  let timer;
+  try {
+    await new Promise((resolve, reject) => {
+      image.onload = () => resolve();
+      image.onerror = () =>
+        reject(
+          Error(
+            "图片无法解码，原图片未替换。请使用完整的 JPG、PNG 或 WebP 文件。",
+          ),
+        );
+      timer = setTimeout(
+        () => reject(Error("图片解码超时，原图片未替换，请换较小图片。")),
+        15000,
+      );
+      image.src = url;
+    });
+    if (
+      !image.naturalWidth ||
+      !image.naturalHeight ||
+      image.naturalWidth * image.naturalHeight > 16000000
+    )
+      throw Error("图片实际尺寸无效或过大，原图片未替换。");
+  } finally {
+    clearTimeout(timer);
+    image.onload = null;
+    image.onerror = null;
+    image.src = "";
+    URL.revokeObjectURL(url);
+  }
+}
+export async function uploadImage(file, { decode = decodeUploadedImage } = {}) {
   if (!file || file.size > MAX_UPLOAD_BYTES) throw Error("图片文件最多 8 MB。");
   const bytes = new Uint8Array(await file.arrayBuffer());
   const info = inspectImage(bytes);
+  await decode(file);
   let binary = "";
   for (let i = 0; i < bytes.length; i += 32768)
     binary += String.fromCharCode(...bytes.slice(i, i + 32768));
@@ -196,4 +230,36 @@ export async function prepareReference(ref) {
   const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
   if (bytes.length <= MAX_REFERENCE_BYTES) return ref;
   return prepareReferenceFile(new Blob([bytes], { type }));
+}
+
+export async function verifyProjectImages(
+  project,
+  { isCurrent = () => true, decode = decodeUploadedImage } = {},
+) {
+  const entries = project.scenes.map((scene, i) => ({
+    ref: scene.imageRef,
+    label: `分镜 ${i + 1}`,
+  }));
+  if (project.character.referenceImage)
+    entries.push({
+      ref: project.character.referenceImage,
+      label: "人物参考图",
+    });
+  const seen = new Set();
+  for (const { ref, label } of entries) {
+    if (!isCurrent()) return false;
+    if (!ref || seen.has(ref.dataUrl)) continue;
+    seen.add(ref.dataUrl);
+    const [header, base64] = ref.dataUrl.split(",");
+    try {
+      await decode(
+        new Blob([Uint8Array.from(atob(base64), (c) => c.charCodeAt(0))], {
+          type: header.slice(5, header.indexOf(";")),
+        }),
+      );
+    } catch (error) {
+      throw Error(`${label}图片无法读取，原项目未替换。${error.message}`);
+    }
+  }
+  return isCurrent();
 }

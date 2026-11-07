@@ -1,3 +1,4 @@
+import { DEFAULT_SPEED, MIN_SPEED, MAX_SPEED } from "./voiceConfig.js";
 import { validateCues } from "./video/alignment.js";
 import {
   normalizePresentation,
@@ -52,6 +53,7 @@ export const initialProject = () => ({
   style: "绘本水彩",
   ratio: "9:16",
   rate: 0.9,
+  aiSpeed: DEFAULT_SPEED,
   subtitles: "both",
   scenes: [],
 });
@@ -110,6 +112,13 @@ export function validateProject(p, { recovery = false } = {}) {
     ])
       str(scene[key], `分镜 ${i + 1} ${label}`, TEXT_LIMIT);
   });
+  if (
+    p.aiSpeed !== undefined &&
+    (!Number.isFinite(p.aiSpeed) ||
+      p.aiSpeed < MIN_SPEED ||
+      p.aiSpeed > MAX_SPEED)
+  )
+    throw Error("AI 配音语速必须在 0.7–1.2 之间。");
   if (p.videoTiming !== undefined && p.videoTiming !== null) {
     const t = p.videoTiming;
     const valid = t.cues
@@ -160,6 +169,7 @@ export function serializeProject(
   } = project;
   const raw = JSON.stringify({
     ...presentationRecord(project),
+    aiSpeed: project.aiSpeed ?? DEFAULT_SPEED,
     ...(project.videoTiming
       ? {
           videoTiming: {
@@ -234,6 +244,7 @@ export function parseProject(value, { maxBytes = PROJECT_BYTES_LIMIT } = {}) {
   serializeProject(p, { maxBytes });
   return normalizePresentation({
     ...p,
+    aiSpeed: p.aiSpeed ?? DEFAULT_SPEED,
     scenes: p.scenes.map((s) => ({ ...s, id: uid() })),
   });
 }

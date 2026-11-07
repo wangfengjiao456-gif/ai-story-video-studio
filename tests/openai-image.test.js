@@ -252,7 +252,7 @@ test("失败不回传假图片、未知来源元数据或服务端 Key", async (
 test("原始上传字节保留，画幅与焦点变化不重新编码", async () => {
   const bytes = Buffer.from(png.split(",")[1], "base64");
   const file = new Blob([bytes], { type: "image/png" });
-  const ref = await uploadImage(file);
+  const ref = await uploadImage(file, { decode: async () => {} });
   assert.equal(ref.dataUrl, png);
   const p = project();
   p.scenes[0].imageRef = ref;

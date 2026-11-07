@@ -262,3 +262,16 @@ test("暂停时拖动音频进度或返回开头，分镜仍跟随音频时间�
     await h.cleanup();
   }
 });
+
+test("saved voice speed initializes and follows imported project settings without generating audio", async () => {
+  const p = { ...project(), aiSpeed: 0.9 };
+  const h = await mount(p);
+  try {
+    assert.equal(h.studio.speed, 0.9);
+    await h.update({ ...p, aiSpeed: 1.0 });
+    assert.equal(h.studio.speed, 1.0);
+    assert.deepEqual(h.studio.assets, {});
+  } finally {
+    await h.cleanup();
+  }
+});

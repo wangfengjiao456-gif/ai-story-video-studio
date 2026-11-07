@@ -1,3 +1,4 @@
+import { verifyProjectImages } from "./services/images.js";
 import React, { useState, useEffect, useRef } from "react";
 import {
   BookOpen,
@@ -77,6 +78,7 @@ export default function App() {
     [message, setMessage] = useState(""),
     [voices, setVoices] = useState([]),
     [voiceName, setVoiceName] = useState("");
+  const [lastSavedProject, setLastSavedProject] = useState(p);
   const [recovery, setRecovery] = useState(startup.recovery ? startup : null);
   const [backups, setBackups] = useState(startup.backups || []);
   const [blocked, setBlocked] = useState(
@@ -97,6 +99,7 @@ export default function App() {
       voice.stop();
     },
     onFrame: setIndex,
+    onSpeedChange: (aiSpeed) => setP((prev) => ({ ...prev, aiSpeed })),
   });
   const imageGeneration = useImageGeneration(p, (id, imageRef) =>
     setP((prev) => ({
@@ -138,7 +141,15 @@ export default function App() {
     }),
   };
   const frameDuration = previewProject.scenes[index]?.duration;
-  const input = useRef(null);
+  const input = useRef(null),
+    projectImportEpoch = useRef(0);
+  const [importingProject, setImportingProject] = useState(false);
+  useEffect(
+    () => () => {
+      projectImportEpoch.current++;
+    },
+    [],
+  );
   const update = (patch) => setP((prev) => ({ ...prev, ...patch }));
   const stop = () => {
     setPlaying(false);
@@ -180,6 +191,7 @@ export default function App() {
   function save() {
     try {
       const result = saveProject(localStorage, p);
+      setLastSavedProject(p);
       setBackups(result.backups);
       setRecovery(null);
       setMessage(
@@ -191,6 +203,25 @@ export default function App() {
       setMessage(`保存失败：${err.message} 当前编辑内容和原有存档均已保留。`);
     }
   }
+  useEffect(() => {
+    if (
+      p === lastSavedProject &&
+      !videoPlayback.rendering &&
+      !videoPlayback.pendingDownload
+    )
+      return;
+    const warn = (e) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [
+    p,
+    lastSavedProject,
+    videoPlayback.rendering,
+    videoPlayback.pendingDownload,
+  ]);
   function exportProject() {
     try {
       downloadProject(p, { maxBytes: PROJECT_FILE_BYTES_LIMIT });
@@ -242,6 +273,8 @@ export default function App() {
     const file = e.target.files[0];
     e.target.value = "";
     if (!file) return;
+    const epoch = ++projectImportEpoch.current;
+    setImportingProject(true);
     try {
       if (file.size > PROJECT_FILE_BYTES_LIMIT)
         throw Error(
@@ -250,6 +283,13 @@ export default function App() {
       const project = parseProject(await file.text(), {
         maxBytes: PROJECT_FILE_BYTES_LIMIT,
       });
+      if (epoch !== projectImportEpoch.current) return;
+      if (
+        !(await verifyProjectImages(project, {
+          isCurrent: () => epoch === projectImportEpoch.current,
+        }))
+      )
+        return;
       if (!window.confirm("导入将替换当前工作区，未保存内容会丢失。是否继续？"))
         return;
       stop();
@@ -265,7 +305,10 @@ export default function App() {
           : "导入成功，点击保存可存入当前浏览器。",
       );
     } catch (err) {
-      setMessage(`导入失败：${err.message}`);
+      if (epoch === projectImportEpoch.current)
+        setMessage(`导入失败：${err.message}`);
+    } finally {
+      if (epoch === projectImportEpoch.current) setImportingProject(false);
     }
   }
   function speak(s) {
@@ -322,14 +365,22 @@ export default function App() {
             <span>新建故事项目</span>
           </div>
           <div className="header-actions">
-            <button onClick={() => input.current.click()}>
+            <button
+              disabled={importingProject}
+              onClick={() => input.current.click()}
+            >
               <Upload size={16} />
-              <span>导入项目</span>
+              <span>{importingProject ? "读取项目中…" : "导入项目"}</span>
             </button>
             <button onClick={exportProject} disabled={blocked}>
               <Download size={16} />
               <span>导出 JSON</span>
             </button>
+            {p !== lastSavedProject && (
+              <span className="muted" role="status">
+                有未保存更改
+              </span>
+            )}
             <button className="primary" onClick={save} disabled={blocked}>
               <Save size={16} />
               保存项目

@@ -4,19 +4,40 @@ export async function jsonRequest(url, options, fetchImpl = fetch) {
     response = await fetchImpl(url, options);
   } catch (e) {
     if (e.name === "AbortError" || e.name === "TimeoutError") throw e;
-    throw Error("网络请求失败，请检查渲染服务 HTTPS 与允许的 Preview 域名。");
+    throw Object.assign(
+      Error("网络请求失败，请检查渲染服务 HTTPS 与允许的 Preview 域名。"),
+      { retryable: true },
+    );
   }
   let data;
   try {
     data = await response.json();
   } catch {
-    throw Error("服务响应不可读，请确认 Vercel API 路由和渲染服务已部署。");
+    const detail =
+      response.status === 401 || response.status === 403
+        ? "若为 Preview，请先登录 Vercel；若为 worker，请检查密钥和来源白名单。"
+        : response.status === 404
+          ? "接口不存在，请检查服务地址和当前分支部署。"
+          : "请确认 Vercel API 路由和渲染服务已部署。";
+    throw Object.assign(
+      Error(`服务响应不可读（HTTP ${response.status}）。${detail}`),
+      {
+        status: response.status,
+        retryable: [408, 429, 500, 502, 503, 504].includes(response.status),
+      },
+    );
   }
   if (!response.ok)
-    throw Error(
-      typeof data.error === "string"
-        ? data.error
-        : data.error?.message || "请求失败。",
+    throw Object.assign(
+      Error(
+        typeof data?.error === "string"
+          ? data.error
+          : data?.error?.message || `请求失败（HTTP ${response.status}）。`,
+      ),
+      {
+        status: response.status,
+        retryable: [408, 429, 500, 502, 503, 504].includes(response.status),
+      },
     );
   return data;
 }
@@ -67,6 +88,7 @@ export async function renderVideo(
     timeoutMs = 20 * 60 * 1000,
     requestTimeoutMs = 60000,
     pollMs = 1500,
+    readRetryMs = 300,
   } = {},
 ) {
   if (timeline.precision === "estimated")
@@ -74,21 +96,46 @@ export async function renderVideo(
   const deadline = abortScope(signal, timeoutMs),
     combined = deadline.signal;
   const request = async (url, options, raw = false) => {
-    const scope = abortScope(combined, requestTimeoutMs);
-    try {
-      checkAbort(scope.signal);
-      return raw
-        ? await fetchImpl(url, { ...options, signal: scope.signal })
-        : await jsonRequest(
-            url,
-            { ...options, signal: scope.signal },
-            fetchImpl,
-          );
-    } finally {
-      scope.dispose();
+    const readOnly =
+      !options.method || options.method === "GET" || options.method === "HEAD";
+    for (let attempt = 0; ; attempt++) {
+      const scope = abortScope(combined, requestTimeoutMs);
+      try {
+        checkAbort(scope.signal);
+        const response = raw
+          ? await fetchImpl(url, { ...options, signal: scope.signal })
+          : await jsonRequest(
+              url,
+              { ...options, signal: scope.signal },
+              fetchImpl,
+            );
+        if (raw && [408, 429, 500, 502, 503, 504].includes(response.status))
+          throw Object.assign(Error("下载检查暂时不可用。"), {
+            retryable: true,
+          });
+        return response;
+      } catch (error) {
+        if (
+          !readOnly ||
+          attempt >= 2 ||
+          combined.aborted ||
+          !(
+            error.retryable ||
+            error.name === "TypeError" ||
+            error.name === "TimeoutError"
+          )
+        )
+          throw error;
+      } finally {
+        scope.dispose();
+      }
+      await abortable(
+        new Promise((resolve) => setTimeout(resolve, readRetryMs)),
+        combined,
+      );
     }
   };
-  let job;
+  let job, completedVideo;
   try {
     job = await request("/api/video-jobs", {
       method: "POST",
@@ -149,19 +196,15 @@ export async function renderVideo(
             "输出格式或时长验证失败，未标记为成功，请更新渲染服务并重试。",
           );
         const url = `${base}/video?token=${encodeURIComponent(job.token)}`;
-        const file = await request(url, { method: "HEAD" }, true);
-        if (
-          !file.ok ||
-          !file.headers.get("content-type")?.includes("video/mp4") ||
-          Number(file.headers.get("content-length")) <= 0
-        )
-          throw Error("MP4 文件尚不可下载或已过期，请检查渲染服务后重试。");
-        return {
+        completedVideo = {
           url,
           download: `${url}&download=1`,
           expiresAt: job.expiresAt,
           result: r,
         };
+        const file = await request(url, { method: "HEAD" }, true);
+        assertVideoHeaders(file);
+        return completedVideo;
       }
       if (!["queued", "rendering", "uploading"].includes(state.state))
         throw Error("渲染任务状态无效，请重试。");
@@ -178,7 +221,9 @@ export async function renderVideo(
       await new Promise((resolve, reject) => {
         const abort = () => {
           clearTimeout(timer);
-          reject(combined.reason);
+          reject(
+            combined.reason || new DOMException("Cancelled", "AbortError"),
+          );
         };
         const timer = setTimeout(() => {
           combined.removeEventListener("abort", abort);
@@ -189,18 +234,73 @@ export async function renderVideo(
       });
     }
   } catch (error) {
-    if (job) await cancelRender(job, { fetchImpl });
+    if (job && !completedVideo) await cancelRender(job, { fetchImpl });
+    if (completedVideo && !signal?.aborted && !error.terminalDownload) {
+      error.recoverableVideo = completedVideo;
+    }
     if (signal?.aborted) throw new DOMException("Cancelled", "AbortError");
     if (
       combined.reason?.name === "TimeoutError" ||
       error.name === "TimeoutError"
     )
-      throw Error(
-        "视频导出或上传超时，任务已停止；项目与 MP3 保留，请检查服务后重试。",
+      throw Object.assign(
+        Error(
+          completedVideo
+            ? "视频已经编码完成，但下载检查超时。文件未删除，请恢复下载检查，无需重新渲染。"
+            : "视频导出或上传超时，任务已停止；项目与 MP3 保留，请检查服务后重试。",
+        ),
+        { recoverableVideo: completedVideo },
+      );
+    if (completedVideo && error.name === "TypeError")
+      throw Object.assign(
+        Error("视频已编码，但下载网络请求失败，文件未删除，请恢复下载检查。"),
+        { recoverableVideo: completedVideo },
       );
     throw error;
   } finally {
     deadline.dispose();
+  }
+}
+function assertVideoHeaders(file) {
+  if (
+    !file.ok ||
+    !file.headers.get("content-type")?.includes("video/mp4") ||
+    !Number.isFinite(Number(file.headers.get("content-length"))) ||
+    Number(file.headers.get("content-length")) <= 0
+  )
+    throw Object.assign(
+      Error(
+        [401, 404, 410].includes(file.status)
+          ? "视频任务已过期或服务已重启，请重新导出。"
+          : "MP4 下载检查失败，已完成文件未删除，可恢复下载检查。",
+      ),
+      { terminalDownload: [401, 404, 410].includes(file.status) },
+    );
+}
+export function renderExpired(output, now = Date.now()) {
+  return Number.isFinite(output?.expiresAt) && output.expiresAt * 1000 <= now;
+}
+export async function recoverVideoDownload(
+  output,
+  { fetchImpl = fetch, signal } = {},
+) {
+  if (renderExpired(output))
+    throw Error("视频下载已过期，请重新导出。项目与原文件仍保留。");
+  const scope = abortScope(signal, 30000);
+  try {
+    checkAbort(scope.signal);
+    const file = await fetchImpl(output.url, {
+      method: "HEAD",
+      signal: scope.signal,
+    });
+    assertVideoHeaders(file);
+    return output;
+  } catch (error) {
+    if (error.name === "TypeError")
+      throw Error("下载检查网络请求失败，文件未删除，请恢复网络后重试。");
+    throw error;
+  } finally {
+    scope.dispose();
   }
 }
 export async function cancelRender(job, { fetchImpl = fetch } = {}) {
