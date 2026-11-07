@@ -52,6 +52,11 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(204);self.cors();self.send_header('Access-Control-Allow-Methods','GET,POST,PUT,DELETE,OPTIONS');self.send_header('Access-Control-Allow-Headers','Authorization,Content-Type,Range');self.send_header('Access-Control-Expose-Headers','Content-Range,Content-Length');self.end_headers()
     def do_POST(self):
         try:
+            if self.path=='/check':
+                if not KEY or not hmac.compare_digest(self.headers.get('Authorization',''),f'Bearer {KEY}'):return self.json(401,{'error':'渲染服务密钥不匹配。'})
+                body=json.loads(self.body(1000))
+                if body.get('origin') not in ORIGINS:return self.json(403,{'error':'请在渲染服务 ALLOWED_ORIGINS 添加当前 Preview 的完整 HTTPS 域名。'})
+                return self.json(200,{'ok':True})
             if self.path=='/jobs':
                 if not KEY or not hmac.compare_digest(self.headers.get('Authorization',''),f'Bearer {KEY}'):return self.json(401,{'error':'渲染服务密钥不匹配。'})
                 body=json.loads(self.body(100000));validate_manifest(body)

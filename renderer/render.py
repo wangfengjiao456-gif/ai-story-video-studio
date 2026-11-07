@@ -44,16 +44,18 @@ def render(directory,manifest,progress=lambda n:None,cancelled=lambda:False,proc
         info=probe(directory/f'audio-{i}.mp3',True)
         if not any(s.get('codec_type')=='audio' and s.get('codec_name')=='mp3' for s in info['streams']):raise ValueError('仅支持真实 MP3 音频。')
         if abs(float(info['format']['duration'])-a['duration'])>.25:raise ValueError('音频真实时长与网页时长不符，请重新载入音频后导出。')
-    total=sum(f['frames'] for f in manifest['frames'])/FPS
+    total=sum(a['duration'] for a in manifest['audios']) # trim to source audio, not rounded-up frame count
+    # Paths are generated above, never accepted from the client. safe=0 enables
+    # per-image framerate, avoiding concat's default 25fps timing quantization.
     lines=[]
-    for i,f in enumerate(manifest['frames']):lines += [f"file 'frame-{i}.png'",f"duration {f['frames']/FPS:.9f}"]
-    lines += [f"file 'frame-{len(manifest['frames'])-1}.png'"]
+    for i,f in enumerate(manifest['frames']):lines += [f"file 'frame-{i}.png'", "option framerate 30", f"duration {f['frames']/FPS:.9f}"]
+    lines += [f"file 'frame-{len(manifest['frames'])-1}.png'", "option framerate 30"]
     (directory/'frames.txt').write_text('\n'.join(lines)+'\n')
-    cmd=['ffmpeg','-hide_banner','-loglevel','error','-y','-threads','2','-protocol_whitelist','file,pipe','-f','concat','-safe','1','-c:v','png','-i',str(directory/'frames.txt')]
+    cmd=['ffmpeg','-hide_banner','-loglevel','error','-y','-threads','2','-protocol_whitelist','file,pipe','-f','concat','-safe','0','-c:v','png','-i',str(directory/'frames.txt')]
     for i in range(len(manifest['audios'])):cmd+=['-protocol_whitelist','file,pipe','-f','mp3','-i',str(directory/f'audio-{i}.mp3')]
     parts=[f"[{i+1}:a]aresample=48000,atrim=duration={a['duration']},apad=whole_dur={a['duration']},asetpts=PTS-STARTPTS[a{i}]" for i,a in enumerate(manifest['audios'])]
     parts+=[''.join(f'[a{i}]' for i in range(len(manifest['audios'])))+f"concat=n={len(manifest['audios'])}:v=0:a=1,apad[audio]"]
-    cmd+=['-filter_complex_threads','1','-filter_complex',';'.join(parts),'-map','0:v:0','-map','[audio]','-r',str(FPS),'-c:v','libx264','-preset','veryfast','-crf','20','-profile:v','high','-level','4.0','-pix_fmt','yuv420p','-threads','2','-c:a','aac','-b:a','192k','-ar','48000','-ac','2','-t',str(total),'-movflags','+faststart','-progress','pipe:1','-nostats',str(directory/'video.mp4')]
+    cmd+=['-filter_complex_threads','1','-filter_complex',';'.join(parts),'-map','0:v:0','-map','[audio]','-vf','fps=fps=30:round=near','-r',str(FPS),'-c:v','libx264','-preset','veryfast','-crf','20','-profile:v','high','-level','4.0','-pix_fmt','yuv420p','-threads','2','-c:a','aac','-b:a','192k','-ar','48000','-ac','2','-t',str(total),'-movflags','+faststart','-progress','pipe:1','-nostats',str(directory/'video.mp4')]
     with open(directory/'render-error.log','w') as errors:
         process=subprocess.Popen(cmd,stdout=subprocess.PIPE,stderr=errors,text=True);process_callback(process)
         timer=threading.Timer(900,process.kill);timer.start()

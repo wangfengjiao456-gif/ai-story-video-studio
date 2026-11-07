@@ -13,6 +13,21 @@ class RendererTests(unittest.TestCase):
             self.assertIsNone(progress_value(line,10))
         self.assertEqual(progress_value('out_time_us=5000000\n',10),54)
 
+    @unittest.skipUnless(shutil.which('ffmpeg') and shutil.which('ffprobe'),'FFmpeg not installed')
+    def test_frame_boundary_uses_30fps_and_audio_duration(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);png(root/'frame-0.png',(230,20,20));png(root/'frame-1.png',(20,230,20))
+            subprocess.run(['ffmpeg','-v','error','-f','lavfi','-i','sine=frequency=440:duration=1.5','-c:a','libmp3lame','-y',str(root/'audio-0.mp3')],check=True)
+            duration=float(probe(root/'audio-0.mp3',True)['format']['duration'])
+            total=__import__('math').ceil(duration*30)
+            manifest={'version':1,'width':1080,'height':1920,'fps':30,'frames':[{'frames':16},{'frames':total-16}],'audios':[{'duration':duration}]}
+            result=render(root,manifest)
+            self.assertLessEqual(abs(result['duration']-duration),1/30+.001)
+            data=subprocess.check_output(['ffmpeg','-v','error','-i',str(root/'video.mp4'),'-vf',r'select=eq(n\,15)+eq(n\,16),scale=1:1','-vsync','0','-f','rawvideo','-pix_fmt','rgb24','pipe:1'])
+            self.assertEqual(len(data),6)
+            self.assertGreater(data[0],180);self.assertLess(data[1],90)
+            self.assertGreater(data[4],180);self.assertLess(data[3],90)
+
     def test_rejects_invalid_manifest(self):
         for m in [{},{'version':1,'width':1080,'height':1920,'fps':30,'frames':[{'frames':-1}],'audios':[{'duration':1}]}]:
             with self.assertRaises(ValueError):validate_manifest(m)
@@ -36,6 +51,11 @@ class RendererTests(unittest.TestCase):
                     except (OSError,urllib.error.URLError):time.sleep(.05)
                 with self.assertRaises(urllib.error.HTTPError) as denied:request('/jobs','POST',json.dumps(manifest).encode(),{'Content-Type':'application/json'})
                 self.assertEqual(denied.exception.code,401)
+                for origin,expected in [('https://other.test',403),('https://studio.test',200)]:
+                    try:
+                        checked=request('/check','POST',json.dumps({'origin':origin}).encode(),{'Content-Type':'application/json','Authorization':'Bearer '+env['RENDERER_API_KEY']})
+                        self.assertEqual(checked.status,expected);checked.close()
+                    except urllib.error.HTTPError as e:self.assertEqual(e.code,expected)
                 response=request('/jobs','POST',json.dumps(manifest).encode(),{'Content-Type':'application/json','Authorization':'Bearer '+env['RENDERER_API_KEY']});job=json.load(response);prefix='/jobs/'+job['jobId'];auth={'Authorization':'Bearer '+job['token'],'Origin':'https://studio.test'}
                 with self.assertRaises(urllib.error.HTTPError):request(prefix+'/../../secrets','PUT',b'bad',auth)
                 request(prefix+'/frame-0.png','PUT',(root/'fixture.png').read_bytes(),auth).close();request(prefix+'/audio-0.mp3','PUT',(root/'fixture.mp3').read_bytes(),auth).close()
@@ -48,7 +68,7 @@ class RendererTests(unittest.TestCase):
                     if state['state'] in ['complete','error']:break
                     time.sleep(.1)
                 self.assertEqual(state['state'],'complete',state)
-                self.assertEqual(state['result']['videoCodec'],'h264');self.assertEqual(state['result']['audioCodec'],'aac')
+                self.assertEqual(state['result']['videoCodec'],'h264');self.assertEqual(state['result']['audioCodec'],'aac');self.assertLessEqual(abs(state['result']['duration']-duration),1/30+.001)
                 response=request(prefix+'/video?token='+job['token'],headers={'Range':'bytes=0-99','Origin':'https://studio.test'})
                 self.assertEqual(response.status,206);self.assertEqual(len(response.read()),100);self.assertIn('ftyp',request(prefix+'/video?token='+job['token']).read(64).decode('latin1'))
             finally:

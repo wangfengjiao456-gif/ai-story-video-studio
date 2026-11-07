@@ -1,3 +1,4 @@
+import { validateCues } from "./alignment.js";
 import { articleTimeline, isFresh } from "../services/aiVoice.js";
 import { framePlan } from "../presentation/frameRenderer.js";
 export const FPS = 30;
@@ -11,14 +12,20 @@ export function timingSignature(project, assets, speed, mode) {
     project.english,
     project.scenes.map((s) => s.english),
     speed,
-    audio.map((a) => [a?.text, a?.duration, a?.blob?.size, a?.alignment]),
+    audio.map((a) => [
+      a?.text,
+      a?.duration,
+      a?.blob?.size,
+      a?.alignment,
+      a?.fingerprint,
+    ]),
   ]);
   let h = 2166136261;
   for (let i = 0; i < raw.length; i++) {
     h ^= raw.charCodeAt(i);
     h = Math.imul(h, 16777619);
   }
-  return `${mode}-${(h >>> 0).toString(16)}`;
+  return `${mode}-${(h >>> 0).toString(16)}${assets.article?.external && mode === "article" ? "-" + assets.article.fingerprint : ""}`;
 }
 export function buildVideoTimeline(
   project,
@@ -74,6 +81,16 @@ export function buildVideoTimeline(
       project.videoTiming?.signature === signature
         ? project.videoTiming.boundaries
         : null;
+  const savedCues =
+    project.videoTiming?.signature === signature
+      ? project.videoTiming.cues
+      : null;
+  if (mode === "article" && assets.article?.external && !manual && !savedCues)
+    throw Error(
+      "外部 MP3 必须先完成逐句音频对齐，或手动填写并确认全部分镜起止时间；不会按字数猜测。 ",
+    );
+  if (savedCues && !validateCues(savedCues, project.scenes.length, duration))
+    throw Error("起止时间无效：请确保不重叠且位于音频时长内。");
   const boundaries = manual || [
     0,
     ...ranges.slice(1).map((r) => r.start),
@@ -97,6 +114,12 @@ export function buildVideoTimeline(
         ? Math.ceil(duration * FPS) / FPS
         : Math.round(boundaries[index + 1] * FPS) / FPS,
   }));
+  if (savedCues)
+    ranges = savedCues.map((c, index) => ({
+      index,
+      start: Math.round(c.start * FPS) / FPS,
+      end: Math.round(c.end * FPS) / FPS,
+    }));
   const p = { ...project, ratio: "9:16" };
   for (const range of ranges) {
     const plan = framePlan(p, project.scenes[range.index], measure),
@@ -122,14 +145,62 @@ export function buildVideoTimeline(
       });
     }
   }
+  // Fill silent intervals with the held image and no caption, shared by preview/export.
+  if (savedCues) {
+    const filled = [];
+    let cursor = 0;
+    for (const f of frames) {
+      if (f.start > cursor) {
+        const sceneIndex = filled.at(-1)?.sceneIndex ?? f.sceneIndex;
+        const scene = {
+          ...project.scenes[sceneIndex],
+          english: "",
+          chinese: "",
+        };
+        filled.push({
+          sceneIndex,
+          page: 0,
+          start: cursor,
+          end: f.start,
+          frames: Math.round((f.start - cursor) * FPS),
+          plan: framePlan(p, scene, measure),
+        });
+      }
+      filled.push(f);
+      cursor = f.end;
+    }
+    const end = Math.ceil(duration * FPS) / FPS;
+    if (cursor < end) {
+      const sceneIndex = project.scenes.length - 1;
+      filled.push({
+        sceneIndex,
+        page: 0,
+        start: cursor,
+        end,
+        frames: Math.round((end - cursor) * FPS),
+        plan: framePlan(
+          p,
+          { ...project.scenes[sceneIndex], english: "", chinese: "" },
+          measure,
+        ),
+      });
+    }
+    frames.splice(0, frames.length, ...filled);
+  }
   if (frames.length > 300)
     throw Error("字幕分页超过 300 页，请缩短内容或拆成多个项目。");
   return {
     signature,
-    precision: manual ? "manual" : precision,
+    precision: savedCues
+      ? project.videoTiming.source === "forced"
+        ? "forced"
+        : "manual"
+      : manual
+        ? "manual"
+        : precision,
     reason,
-    manualStale: !!project.videoTiming && !manual,
-    duration: ranges.at(-1).end,
+    manualStale: !!project.videoTiming && !manual && !savedCues,
+    duration: Math.ceil(duration * FPS) / FPS,
     sourceDuration: duration,
     ranges,
     frames,

@@ -286,6 +286,7 @@ export default function App() {
           {tabs.map(([id, label, Icon], i) => (
             <button
               key={id}
+              aria-label={label}
               className={tab === id ? "active" : ""}
               onClick={() => setTab(id)}
             >

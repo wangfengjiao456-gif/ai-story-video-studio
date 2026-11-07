@@ -4,8 +4,11 @@ import {
   audioDuration,
   renderVideo,
   cancelRender,
+  jsonRequest,
 } from "../video/exportClient.js";
 import { paintFrame, FONT_STACK } from "../presentation/frameRenderer.js";
+import { sceneCues, validateCues } from "../video/alignment.js";
+import { timingSignature } from "../video/timeline.js";
 import ServiceStatus from "./ServiceStatus.jsx";
 export default function VideoStudioPanel({
   project,
@@ -16,6 +19,12 @@ export default function VideoStudioPanel({
   hidden,
   pauseRef,
 }) {
+  const [rendererReady, setRendererReady] = useState(false),
+    [checkingRenderer, setCheckingRenderer] = useState(false);
+  const [aligning, setAligning] = useState(false),
+    [confirmAlign, setConfirmAlign] = useState(false),
+    [draft, setDraft] = useState([]);
+  const alignmentBusy = useRef(false);
   const [source, setSource] = useState("article"),
     [prepared, setPrepared] = useState(null),
     [imported, setImported] = useState(null),
@@ -34,7 +43,14 @@ export default function VideoStudioPanel({
     importedUrl = useRef(null),
     exportImage = useRef(null),
     timelineRef = useRef(null),
-    busyRef = useRef(false);
+    busyRef = useRef(false),
+    alignmentContext = useRef(null);
+  alignmentContext.current = JSON.stringify([
+    imported?.fingerprint,
+    project.scenes.map((s) => s.english),
+    project.english,
+    ai.speed,
+  ]);
   const measure = useMemo(() => {
     if (typeof document === "undefined") return undefined;
     const ctx = document.createElement("canvas").getContext("2d");
@@ -48,20 +64,43 @@ export default function VideoStudioPanel({
       return cache.get(key);
     };
   }, []);
-  let timeline = null,
-    timingError = "";
-  try {
-    if (prepared)
-      timeline = buildVideoTimeline(
-        project,
-        prepared.assets,
-        prepared.speed,
-        prepared.source,
-        measure,
-      );
-  } catch (err) {
-    timingError = err.message;
-  }
+  const { timeline, timingError } = useMemo(() => {
+    try {
+      return {
+        timeline: prepared
+          ? buildVideoTimeline(
+              project,
+              prepared.assets,
+              prepared.speed,
+              prepared.source,
+              measure,
+            )
+          : null,
+        timingError: "",
+      };
+    } catch (err) {
+      return { timeline: null, timingError: err.message };
+    }
+  }, [project, prepared, measure]);
+  const loadImage = useMemo(() => {
+    const cache = new Map();
+    return (src) => {
+      if (!cache.has(src)) {
+        const promise = new Promise((resolve, reject) => {
+          const image = new Image();
+          image.onload = () => resolve(image);
+          image.onerror = () => {
+            cache.delete(src);
+            reject(Error("分镜图片无法解码，请重新上传。"));
+          };
+          image.src = src;
+        });
+        cache.set(src, promise);
+        if (cache.size > 3) cache.delete(cache.keys().next().value);
+      }
+      return cache.get(src);
+    };
+  }, []);
   timelineRef.current = timeline;
   const frame = timeline ? frameAt(timeline, time) : null;
   const pause = () => {
@@ -80,6 +119,7 @@ export default function VideoStudioPanel({
   useEffect(
     () => () => {
       controller.current?.abort();
+      alignmentContext.current = null;
       if (busyRef.current) cancelRender(job.current);
       if (importedUrl.current) URL.revokeObjectURL(importedUrl.current);
     },
@@ -99,12 +139,9 @@ export default function VideoStudioPanel({
     const ctx = canvas.current.getContext("2d");
     async function draw() {
       try {
-        const image = new Image();
-        await new Promise((resolve, reject) => {
-          image.onload = resolve;
-          image.onerror = () => reject(Error("分镜图片无法解码，请重新上传。"));
-          image.src = frame.plan.scene.imageRef.dataUrl;
-        });
+        const image = await loadImage(frame.plan.scene.imageRef.dataUrl);
+        const next = project.scenes[frame.sceneIndex + 1]?.imageRef?.dataUrl;
+        if (next) loadImage(next).catch(() => {});
         if (cancelled) return;
         paintFrame(ctx, frame.plan, frame.page, image);
         onFrame?.(frame.sceneIndex);
@@ -119,6 +156,8 @@ export default function VideoStudioPanel({
   }, [
     frame?.start,
     frame?.end,
+    frame?.plan.scene.english,
+    frame?.plan.scene.chinese,
     frame?.plan.scene.imageRef,
     frame?.plan.scene.imageFit,
     frame?.plan.scene.imageScale,
@@ -129,6 +168,73 @@ export default function VideoStudioPanel({
     project.subtitlePosition,
     project.videoTemplate,
   ]);
+  useEffect(() => {
+    if (!playing) return;
+    let id;
+    const tick = () => {
+      timeUpdate();
+      id = requestAnimationFrame(tick);
+    };
+    id = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(id);
+  }, [playing]);
+  function saveCues(cues, source = "manual") {
+    if (
+      !imported ||
+      !validateCues(cues, project.scenes.length, imported.duration)
+    )
+      throw Error(
+        "请填写全部分镜的开始和结束时间：不能重叠、倒序或超过 MP3 总时长，每镜至少一帧。",
+      );
+    const assets = { article: imported };
+    const signature = timingSignature(project, assets, ai.speed, "article");
+    pause();
+    onTimingChange({ signature, cues, source });
+    setPrepared({ assets, speed: ai.speed, source: "article" });
+    setTime(0);
+    setError("");
+  }
+  async function alignImported() {
+    if (alignmentBusy.current || !imported) return;
+    alignmentBusy.current = true;
+    setAligning(true);
+    setConfirmAlign(false);
+    setError("");
+    const original = imported;
+    const context = alignmentContext.current;
+    const transcript = project.scenes.map((s) => s.english).join("\n");
+    try {
+      if (original.blob.size > 3000000)
+        throw Error(
+          "当前 Vercel 对齐上传上限为 3 MB。请压缩为 128kbps MP3 后重试，或手动填写时间轴；原 MP3 可保留用于导出。",
+        );
+      const encoded = await new Promise((resolve, reject) => {
+        const r = new FileReader();
+        r.onerror = () => reject(Error("MP3 读取失败。"));
+        r.onload = () => resolve(r.result.split(",")[1]);
+        r.readAsDataURL(original.blob);
+      });
+      const response = await fetch("/api/align-audio", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ audio: encoded, text: transcript }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw Error(data.error?.message || "音频对齐失败。");
+      if (context !== alignmentContext.current)
+        throw Error(
+          "对齐期间英文或音频已变化，结果未覆盖当前项目，请重新对齐。",
+        );
+      const cues = sceneCues(project.scenes, data.words, original.duration);
+      saveCues(cues, "forced");
+      setDraft(cues);
+    } catch (err) {
+      setError(err.message || "音频对齐网络请求失败。");
+    } finally {
+      alignmentBusy.current = false;
+      setAligning(false);
+    }
+  }
   async function prepare() {
     if (preparing) return;
     pause();
@@ -178,9 +284,18 @@ export default function VideoStudioPanel({
         text: project.english.trim(),
         speed: ai.speed,
         duration: null,
+        external: true,
+        fingerprint: Array.from(
+          new Uint8Array(
+            await crypto.subtle.digest("SHA-256", await file.arrayBuffer()),
+          ),
+          (x) => x.toString(16).padStart(2, "0"),
+        ).join(""),
       };
       try {
         asset.duration = await audioDuration(asset);
+        if (asset.duration > 600)
+          throw Error("当前 MP4 流程最多支持 10 分钟 MP3。");
       } catch (err) {
         URL.revokeObjectURL(url);
         throw err;
@@ -188,10 +303,21 @@ export default function VideoStudioPanel({
       if (importedUrl.current) URL.revokeObjectURL(importedUrl.current);
       importedUrl.current = url;
       setImported(asset);
+      const signature = timingSignature(
+        project,
+        { article: asset },
+        ai.speed,
+        "article",
+      );
+      setDraft(
+        project.videoTiming?.signature === signature && project.videoTiming.cues
+          ? project.videoTiming.cues
+          : project.scenes.map(() => ({ start: "", end: "" })),
+      );
       setSource("imported");
       setPrepared(null);
       setError(
-        "已导入整篇 MP3；来源、语速和内容需人工确认，字幕将使用估算或手动时轴。",
+        "已导入 MP3。请先逐句音频对齐，或填写全部分镜起止时间；不会自动猜测切换时间。",
       );
     } catch (err) {
       setError(err.message);
@@ -244,6 +370,19 @@ export default function VideoStudioPanel({
     } else {
       setTime(t.duration);
       setPlaying(false);
+    }
+  }
+  async function checkRenderer() {
+    setCheckingRenderer(true);
+    setError("");
+    setRendererReady(false);
+    try {
+      await jsonRequest("/api/renderer-status", { method: "POST" });
+      setRendererReady(true);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setCheckingRenderer(false);
     }
   }
   async function exportMp4() {
@@ -306,23 +445,25 @@ export default function VideoStudioPanel({
       exportImage.current = null;
     }
   }
-  function timing(index, value) {
+  function timing(index, field, value) {
     if (!timeline) return;
-    const boundaries = [
-      ...timeline.ranges.map((r) => r.start),
-      timeline.sourceDuration,
-    ];
-    boundaries[index] = Number(value);
-    if (
-      !Number.isFinite(boundaries[index]) ||
-      boundaries[index] <= boundaries[index - 1] + 0.033 ||
-      boundaries[index] >= boundaries[index + 1] - 0.033
-    ) {
-      setError("边界必须严格位于相邻分镜之间，至少相隔一帧。");
+    const cues = timeline.ranges.map((r) => ({
+      start: r.start,
+      end: Math.min(r.end, timeline.sourceDuration),
+    }));
+    if (value.trim() === "") {
+      setError("时间不能为空。");
+      return;
+    }
+    cues[index][field] = Number(value);
+    if (!validateCues(cues, cues.length, timeline.sourceDuration)) {
+      setError("时间必须位于 MP3 内，结束晚于开始，并且不能与相邻分镜重叠。");
       return;
     }
     pause();
-    onTimingChange({ signature: timeline.signature, boundaries });
+    setError("");
+    onTimingChange({ signature: timeline.signature, cues, source: "manual" });
+    if (source === "imported") setDraft(cues);
   }
   return (
     <section
@@ -340,11 +481,24 @@ export default function VideoStudioPanel({
         </div>
       </div>
       <ServiceStatus />
+      <div className="note">
+        <p>
+          MP4 服务：
+          {rendererReady ? "已验证连接、密钥和当前来源" : "尚未验证，请先检查"}
+        </p>
+        <button disabled={checkingRenderer} onClick={checkRenderer}>
+          {checkingRenderer ? "检查中…" : "检查 MP4 服务连接（不调用 AI）"}
+        </button>
+        <p>
+          首次使用需部署仓库 render.yaml 中的 Docker 服务；具体配置见
+          DEPLOYMENT.md。仅在检查成功后开放导出。
+        </p>
+      </div>
       <label className="field">
         <span>视频音频来源</span>
         <select
           value={source}
-          disabled={!!progress && progress.percent < 100}
+          disabled={aligning || (!!progress && progress.percent < 100)}
           onChange={(e) => {
             pause();
             setSource(e.target.value);
@@ -353,11 +507,13 @@ export default function VideoStudioPanel({
         >
           <option value="article">当前整篇 ElevenLabs MP3</option>
           <option value="scenes">全部逐分镜 MP3（连续）</option>
-          <option value="imported">导入的整篇 MP3（估算/手动）</option>
+          <option value="imported">导入的整篇 MP3（真实对齐/手动）</option>
         </select>
       </label>
       <div className="ai-actions">
-        <button onClick={() => fileInput.current.click()}>导入已有 MP3</button>
+        <button disabled={aligning} onClick={() => fileInput.current.click()}>
+          导入已有 MP3
+        </button>
         <input
           ref={fileInput}
           type="file"
@@ -373,6 +529,83 @@ export default function VideoStudioPanel({
               : "准备完整视频"}
         </button>
       </div>
+      {source === "imported" && imported && (
+        <section className="note">
+          <p>
+            MP3 真实时长：{imported.duration.toFixed(3)}{" "}
+            秒。对齐不生成或修改音频。
+          </p>
+          <button disabled={aligning} onClick={() => setConfirmAlign(true)}>
+            {aligning
+              ? "正在对齐，请勿重复提交…"
+              : "逐句音频对齐（ElevenLabs）"}
+          </button>
+          {confirmAlign && (
+            <div role="alertdialog" aria-label="确认音频对齐费用">
+              <p>
+                将此 MP3 和全部英文分镜发送至 ElevenLabs Forced
+                Alignment，可能消耗账户额度。仅执行本次对齐，不重新配音。是否继续？
+              </p>
+              <button disabled={aligning} onClick={alignImported}>
+                确认并对齐一次
+              </button>
+              <button onClick={() => setConfirmAlign(false)}>取消</button>
+            </div>
+          )}
+          <details>
+            <summary>手动填写 / 校对每镜开始与结束时间</summary>
+            <audio controls playsInline src={imported.url} preload="metadata" />
+            {project.scenes.map((scene, i) => (
+              <div className="field" key={scene.id}>
+                <span>
+                  分镜 {i + 1} · {scene.english}
+                </span>
+                {["start", "end"].map((k) => (
+                  <label key={k}>
+                    {k === "start" ? "开始（秒）" : "结束（秒）"}
+                    <input
+                      disabled={aligning}
+                      type="number"
+                      min="0"
+                      max={imported.duration}
+                      step="0.01"
+                      value={draft[i]?.[k] ?? ""}
+                      onChange={(e) =>
+                        setDraft((d) =>
+                          project.scenes.map((_, j) =>
+                            j === i
+                              ? { ...d[j], [k]: e.target.value }
+                              : d[j] || { start: "", end: "" },
+                          ),
+                        )
+                      }
+                    />
+                  </label>
+                ))}
+              </div>
+            ))}
+            <button
+              disabled={aligning}
+              onClick={() => {
+                try {
+                  if (draft.some((c) => c.start === "" || c.end === ""))
+                    throw Error("请填写每镜的起止时间。");
+                  saveCues(
+                    draft.map((c) => ({
+                      start: Number(c.start),
+                      end: Number(c.end),
+                    })),
+                  );
+                } catch (e) {
+                  setError(e.message);
+                }
+              }}
+            >
+              确认并保存全部起止时间
+            </button>
+          </details>
+        </section>
+      )}
       <p className="muted">
         每镜必须已有图片和对应文字。生成新音频后请重新准备。预览和导出使用准备时音频快照，字幕样式和图片使用当前配置；导出开始后是固定快照。
       </p>
@@ -401,13 +634,15 @@ export default function VideoStudioPanel({
             />
           </div>
           <p className="sync-label">
-            {timeline.precision === "aligned"
-              ? "ElevenLabs API 字符对齐"
-              : timeline.precision === "clips"
-                ? "逐镜真实音频边界"
-                : timeline.precision === "manual"
-                  ? "手动微调时轴"
-                  : "估算同步 · 按真实总时长和英文词数分配"}{" "}
+            {timeline.precision === "forced"
+              ? "ElevenLabs 逐词强制对齐（请试听校对）"
+              : timeline.precision === "aligned"
+                ? "ElevenLabs API 字符对齐"
+                : timeline.precision === "clips"
+                  ? "逐镜真实音频边界"
+                  : timeline.precision === "manual"
+                    ? "手动微调时轴"
+                    : "估算同步 · 按真实总时长和英文词数分配"}{" "}
             · 长字幕翻页按本镜时间比例估算 · 30fps 精度
           </p>
           {timeline.manualStale && (
@@ -445,19 +680,28 @@ export default function VideoStudioPanel({
             <p className="muted">
               不修改音频，只调整画面/双语字幕切换；修改会保存到项目。原文或音频变化会停用旧时轴。
             </p>
-            {timeline.ranges.slice(1).map((range, i) => (
-              <label className="field" key={i}>
-                <span>分镜 {i + 2} 开始</span>
-                <input
-                  type="number"
-                  min={timeline.ranges[i].start + 0.034}
-                  max={timeline.ranges[i + 1].end - 0.034}
-                  step="0.033333"
-                  defaultValue={range.start.toFixed(3)}
-                  key={`${timeline.signature}-${range.start}`}
-                  onBlur={(e) => timing(i + 1, e.target.value)}
-                />
-              </label>
+            {timeline.ranges.map((range, i) => (
+              <div className="field" key={i}>
+                <span>分镜 {i + 1}</span>
+                {["start", "end"].map((field) => (
+                  <label key={field}>
+                    {field === "start" ? "开始（秒）" : "结束（秒）"}
+                    <input
+                      disabled={aligning}
+                      type="number"
+                      min="0"
+                      max={timeline.sourceDuration}
+                      step="0.01"
+                      defaultValue={Math.min(
+                        range[field],
+                        timeline.sourceDuration,
+                      ).toFixed(3)}
+                      key={`${timeline.signature}-${range[field]}`}
+                      onBlur={(e) => timing(i, field, e.target.value)}
+                    />
+                  </label>
+                ))}
+              </div>
             ))}
             <button
               onClick={() => {
@@ -470,7 +714,7 @@ export default function VideoStudioPanel({
           </details>
           <button
             className="primary"
-            disabled={busyRef.current}
+            disabled={busyRef.current || !rendererReady}
             onClick={exportMp4}
           >
             导出真实 MP4（H.264 + AAC）

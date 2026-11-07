@@ -1,3 +1,4 @@
+import { validateCues } from "./video/alignment.js";
 import {
   normalizePresentation,
   validatePresentation,
@@ -110,19 +111,26 @@ export function validateProject(p, { recovery = false } = {}) {
   });
   if (p.videoTiming !== undefined && p.videoTiming !== null) {
     const t = p.videoTiming;
+    const valid = t.cues
+      ? Array.isArray(t.cues) &&
+        t.cues.length > 0 &&
+        t.cues.length <= 500 &&
+        validateCues(t.cues, t.cues.length)
+      : Array.isArray(t.boundaries) &&
+        t.boundaries.length === p.scenes.length + 1 &&
+        t.boundaries[0] === 0 &&
+        t.boundaries.every(
+          (v, i) =>
+            Number.isFinite(v) &&
+            v >= 0 &&
+            v <= 600 &&
+            (!i || v > t.boundaries[i - 1]),
+        );
     if (
       typeof t.signature !== "string" ||
       t.signature.length > 100 ||
-      !Array.isArray(t.boundaries) ||
-      t.boundaries.length !== p.scenes.length + 1 ||
-      t.boundaries[0] !== 0 ||
-      t.boundaries.some(
-        (v, i) =>
-          !Number.isFinite(v) ||
-          v < 0 ||
-          v > 600 ||
-          (i && v <= t.boundaries[i - 1]),
-      )
+      !valid ||
+      (t.source !== undefined && !["forced", "manual"].includes(t.source))
     )
       throw Error("手动视频时间轴无效。");
   }
@@ -152,7 +160,15 @@ export function serializeProject(project) {
       ? {
           videoTiming: {
             signature: project.videoTiming.signature,
-            boundaries: project.videoTiming.boundaries,
+            ...(project.videoTiming.cues
+              ? {
+                  cues: project.videoTiming.cues.map((c) => ({
+                    start: c.start,
+                    end: c.end,
+                  })),
+                  source: project.videoTiming.source,
+                }
+              : { boundaries: project.videoTiming.boundaries }),
           },
         }
       : {}),
