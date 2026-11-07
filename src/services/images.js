@@ -1,4 +1,6 @@
-export const MAX_IMAGE_BYTES = 600 * 1024;
+import { IMAGE_MODEL } from "../imageConfig.js";
+export const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
+export const MAX_REFERENCE_BYTES = 600 * 1024;
 export const MAX_UPLOAD_BYTES = 8 * 1024 * 1024;
 function dimensions(bytes) {
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
@@ -85,11 +87,16 @@ export function inspectImage(bytes) {
 export function validateImageRef(ref) {
   if (ref === undefined || ref === null) return;
   if (
-    ref.kind !== "upload" ||
+    !["upload", "generated"].includes(ref.kind) ||
     typeof ref.dataUrl !== "string" ||
     ref.dataUrl.length > (MAX_IMAGE_BYTES * 4) / 3 + 40
   )
-    throw Error("图片引用无效或超过 600 KB，请重新上传图片。");
+    throw Error("图片引用无效或超过 8 MB，请重新上传图片。");
+  if (
+    ref.kind === "generated" &&
+    (ref.model !== IMAGE_MODEL || typeof ref.referenceUsed !== "boolean")
+  )
+    throw Error("生成图片元数据无效。");
   const match = ref.dataUrl.match(
     /^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/]+={0,2})$/,
   );
@@ -103,14 +110,25 @@ export function validateImageRef(ref) {
   }
   const info = inspectImage(bytes);
   if (info.mime !== match[1] || bytes.length > MAX_IMAGE_BYTES)
-    throw Error("图片内容与声明格式不一致，或超过 600 KB。");
+    throw Error("图片内容与声明格式不一致，或超过 8 MB。");
 }
 export function imageRecord(scene) {
   return scene.imageRef
-    ? { imageRef: { kind: "upload", dataUrl: scene.imageRef.dataUrl } }
+    ? {
+        imageRef: {
+          kind: scene.imageRef.kind,
+          dataUrl: scene.imageRef.dataUrl,
+          ...(scene.imageRef.kind === "generated"
+            ? {
+                model: scene.imageRef.model,
+                referenceUsed: !!scene.imageRef.referenceUsed,
+              }
+            : {}),
+        },
+      }
     : {};
 }
-export async function uploadImage(file) {
+export async function prepareReferenceFile(file) {
   if (!file || file.size > MAX_UPLOAD_BYTES)
     throw Error("图片文件最多 8 MB，请先压缩或缩小。");
   const bytes = new Uint8Array(await file.arrayBuffer());
@@ -143,14 +161,105 @@ export async function uploadImage(file) {
       const ref = { kind: "upload", dataUrl };
       try {
         validateImageRef(ref);
+        if (dataUrl.length > (MAX_REFERENCE_BYTES * 4) / 3 + 40)
+          throw Error("参考图仍然过大");
         return ref;
       } catch {
         /* Try lower JPEG quality; never bypass validation. */
       }
     }
-    throw Error("压缩后图片仍超过 600 KB，请选择更简单或更小的图片。");
+    throw Error("压缩后图片仍超过 8 MB，请选择更简单或更小的图片。");
   } finally {
     URL.revokeObjectURL(url);
   }
 }
 // V4 integration point: providers may later return a validated imageRef; no AI image generation exists in V3.
+
+export async function decodeUploadedImage(file) {
+  const url = URL.createObjectURL(file),
+    image = new Image();
+  let timer;
+  try {
+    await new Promise((resolve, reject) => {
+      image.onload = () => resolve();
+      image.onerror = () =>
+        reject(
+          Error(
+            "图片无法解码，原图片未替换。请使用完整的 JPG、PNG 或 WebP 文件。",
+          ),
+        );
+      timer = setTimeout(
+        () => reject(Error("图片解码超时，原图片未替换，请换较小图片。")),
+        15000,
+      );
+      image.src = url;
+    });
+    if (
+      !image.naturalWidth ||
+      !image.naturalHeight ||
+      image.naturalWidth * image.naturalHeight > 16000000
+    )
+      throw Error("图片实际尺寸无效或过大，原图片未替换。");
+  } finally {
+    clearTimeout(timer);
+    image.onload = null;
+    image.onerror = null;
+    image.src = "";
+    URL.revokeObjectURL(url);
+  }
+}
+export async function uploadImage(file, { decode = decodeUploadedImage } = {}) {
+  if (!file || file.size > MAX_UPLOAD_BYTES) throw Error("图片文件最多 8 MB。");
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const info = inspectImage(bytes);
+  await decode(file);
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += 32768)
+    binary += String.fromCharCode(...bytes.slice(i, i + 32768));
+  const ref = {
+    kind: "upload",
+    dataUrl: `data:${info.mime};base64,${btoa(binary)}`,
+  };
+  validateImageRef(ref);
+  return ref;
+}
+export async function prepareReference(ref) {
+  validateImageRef(ref);
+  const [header, base64] = ref.dataUrl.split(",");
+  const type = header.slice(5, header.indexOf(";"));
+  const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
+  if (bytes.length <= MAX_REFERENCE_BYTES) return ref;
+  return prepareReferenceFile(new Blob([bytes], { type }));
+}
+
+export async function verifyProjectImages(
+  project,
+  { isCurrent = () => true, decode = decodeUploadedImage } = {},
+) {
+  const entries = project.scenes.map((scene, i) => ({
+    ref: scene.imageRef,
+    label: `分镜 ${i + 1}`,
+  }));
+  if (project.character.referenceImage)
+    entries.push({
+      ref: project.character.referenceImage,
+      label: "人物参考图",
+    });
+  const seen = new Set();
+  for (const { ref, label } of entries) {
+    if (!isCurrent()) return false;
+    if (!ref || seen.has(ref.dataUrl)) continue;
+    seen.add(ref.dataUrl);
+    const [header, base64] = ref.dataUrl.split(",");
+    try {
+      await decode(
+        new Blob([Uint8Array.from(atob(base64), (c) => c.charCodeAt(0))], {
+          type: header.slice(5, header.indexOf(";")),
+        }),
+      );
+    } catch (error) {
+      throw Error(`${label}图片无法读取，原项目未替换。${error.message}`);
+    }
+  }
+  return isCurrent();
+}

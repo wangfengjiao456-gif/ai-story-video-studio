@@ -1,3 +1,5 @@
+import { DEFAULT_SPEED, MIN_SPEED, MAX_SPEED } from "./voiceConfig.js";
+import { validateCues } from "./video/alignment.js";
 import {
   normalizePresentation,
   validatePresentation,
@@ -51,6 +53,7 @@ export const initialProject = () => ({
   style: "绘本水彩",
   ratio: "9:16",
   rate: 0.9,
+  aiSpeed: DEFAULT_SPEED,
   subtitles: "both",
   scenes: [],
 });
@@ -58,6 +61,7 @@ export const initialProject = () => ({
 export const TEXT_LIMIT = 100000;
 export const TITLE_LIMIT = 120;
 export const PROJECT_BYTES_LIMIT = 5 * 1024 * 1024;
+export const PROJECT_FILE_BYTES_LIMIT = 50 * 1024 * 1024;
 export function textError(value, label, limit = TEXT_LIMIT) {
   if (typeof value !== "string") return `${label}必须是文本。`;
   if (value.length > limit)
@@ -77,7 +81,7 @@ export function validateProject(p, { recovery = false } = {}) {
     !Array.isArray(p.scenes) ||
     p.scenes.length > 500 ||
     !["绘本水彩", "电影质感", "温暖插画", "极简剪纸"].includes(p.style) ||
-    !["9:16", "16:9"].includes(p.ratio) ||
+    !["9:16", "16:9", "4:5"].includes(p.ratio) ||
     !["en", "zh", "both"].includes(p.subtitles) ||
     !Number.isFinite(p.rate) ||
     p.rate < 0.5 ||
@@ -108,11 +112,47 @@ export function validateProject(p, { recovery = false } = {}) {
     ])
       str(scene[key], `分镜 ${i + 1} ${label}`, TEXT_LIMIT);
   });
+  if (
+    p.aiSpeed !== undefined &&
+    (!Number.isFinite(p.aiSpeed) ||
+      p.aiSpeed < MIN_SPEED ||
+      p.aiSpeed > MAX_SPEED)
+  )
+    throw Error("AI 配音语速必须在 0.7–1.2 之间。");
+  if (p.videoTiming !== undefined && p.videoTiming !== null) {
+    const t = p.videoTiming;
+    const valid = t.cues
+      ? Array.isArray(t.cues) &&
+        t.cues.length > 0 &&
+        t.cues.length <= 500 &&
+        validateCues(t.cues, t.cues.length)
+      : Array.isArray(t.boundaries) &&
+        t.boundaries.length === p.scenes.length + 1 &&
+        t.boundaries[0] === 0 &&
+        t.boundaries.every(
+          (v, i) =>
+            Number.isFinite(v) &&
+            v >= 0 &&
+            v <= 600 &&
+            (!i || v > t.boundaries[i - 1]),
+        );
+    if (
+      typeof t.signature !== "string" ||
+      t.signature.length > 100 ||
+      !valid ||
+      (t.source !== undefined && !["forced", "manual"].includes(t.source))
+    )
+      throw Error("手动视频时间轴无效。");
+  }
   validatePresentation(p);
   for (const scene of p.scenes) validateImageRef(scene.imageRef);
+  validateImageRef(p.character.referenceImage);
   return p;
 }
-export function serializeProject(project) {
+export function serializeProject(
+  project,
+  { maxBytes = PROJECT_BYTES_LIMIT } = {},
+) {
   validateProject(project);
   // Persist supported V1–V3 content. Scene IDs are editor identity, regenerated on import.
   const {
@@ -129,6 +169,23 @@ export function serializeProject(project) {
   } = project;
   const raw = JSON.stringify({
     ...presentationRecord(project),
+    aiSpeed: project.aiSpeed ?? DEFAULT_SPEED,
+    ...(project.videoTiming
+      ? {
+          videoTiming: {
+            signature: project.videoTiming.signature,
+            ...(project.videoTiming.cues
+              ? {
+                  cues: project.videoTiming.cues.map((c) => ({
+                    start: c.start,
+                    end: c.end,
+                  })),
+                  source: project.videoTiming.source,
+                }
+              : { boundaries: project.videoTiming.boundaries }),
+          },
+        }
+      : {}),
     version,
     title,
     english,
@@ -137,6 +194,12 @@ export function serializeProject(project) {
       name: character.name,
       appearance: character.appearance,
       clothing: character.clothing,
+      ...(character.referenceImage
+        ? {
+            referenceImage: imageRecord({ imageRef: character.referenceImage })
+              .imageRef,
+          }
+        : {}),
     },
     style,
     ratio,
@@ -156,25 +219,32 @@ export function serializeProject(project) {
       imageScale: scene.imageScale ?? 1,
     })),
   });
-  if (new TextEncoder().encode(raw).byteLength > PROJECT_BYTES_LIMIT)
-    throw Error("项目总大小超过 5 MB，请缩短文本或减少分镜后再保存或导出。");
+  if (new TextEncoder().encode(raw).byteLength > maxBytes)
+    throw Error(
+      maxBytes === PROJECT_BYTES_LIMIT
+        ? "项目总大小超过 5 MB，无法保存到浏览器；请用导出 JSON 文件备份（最多 50 MB）。"
+        : "项目备份超过 50 MB，请保留原图并减小图片副本后导出。",
+    );
   return raw;
 }
-export function parseProject(value) {
+export function parseProject(value, { maxBytes = PROJECT_BYTES_LIMIT } = {}) {
   if (
     typeof value === "string" &&
-    new TextEncoder().encode(value).byteLength > PROJECT_BYTES_LIMIT
+    new TextEncoder().encode(value).byteLength > maxBytes
   )
-    throw Error("项目总大小超过 5 MB，请缩短文本或减少分镜后再保存或导出。");
+    throw Error(
+      `项目总大小超过 ${maxBytes / 1024 / 1024} MB，原有内容未修改。`,
+    );
   let p;
   try {
     p = typeof value === "string" ? JSON.parse(value) : value;
   } catch {
     throw Error("JSON 无法解析，原有内容未被修改。");
   }
-  serializeProject(p);
+  serializeProject(p, { maxBytes });
   return normalizePresentation({
     ...p,
+    aiSpeed: p.aiSpeed ?? DEFAULT_SPEED,
     scenes: p.scenes.map((s) => ({ ...s, id: uid() })),
   });
 }
@@ -200,8 +270,8 @@ export function downloadText(raw, filename) {
   a.click();
   setTimeout(() => URL.revokeObjectURL(url), 10000);
 }
-export function downloadProject(project) {
-  const raw = serializeProject(project);
+export function downloadProject(project, options) {
+  const raw = serializeProject(project, options);
   downloadText(
     raw,
     `${project.title.replace(/[\\/:*?"<>|]/g, "_") || "story"}.json`,

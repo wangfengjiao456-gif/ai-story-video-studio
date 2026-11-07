@@ -1,3 +1,4 @@
+import { verifyProjectImages } from "./services/images.js";
 import React, { useState, useEffect, useRef } from "react";
 import {
   BookOpen,
@@ -27,10 +28,15 @@ import {
   textError,
   TITLE_LIMIT,
   PROJECT_BYTES_LIMIT,
+  PROJECT_FILE_BYTES_LIMIT,
 } from "./model.js";
 import { browserVoiceProvider as voice } from "./services/providers.js";
 import Preview from "./components/Preview.jsx";
 import Field from "./components/Field.jsx";
+import VideoStudioPanel from "./components/VideoStudioPanel.jsx";
+import ServiceStatus from "./components/ServiceStatus.jsx";
+import CharacterReference from "./components/CharacterReference.jsx";
+import useImageGeneration from "./hooks/useImageGeneration.js";
 import TemplateSettings from "./components/TemplateSettings.jsx";
 import SceneImageSettings from "./components/SceneImageSettings.jsx";
 import AIVoicePanel from "./components/AIVoicePanel.jsx";
@@ -43,6 +49,7 @@ const tabs = [
   ["characters", "角色与画风", Users],
   ["audio", "配音与字幕", AudioLines],
   ["ai", "AI 配音", Sparkles],
+  ["video", "视频预览与导出", Film],
 ];
 function load() {
   let result;
@@ -71,18 +78,50 @@ export default function App() {
     [message, setMessage] = useState(""),
     [voices, setVoices] = useState([]),
     [voiceName, setVoiceName] = useState("");
+  const [lastSavedProject, setLastSavedProject] = useState(p);
   const [recovery, setRecovery] = useState(startup.recovery ? startup : null);
   const [backups, setBackups] = useState(startup.backups || []);
   const [blocked, setBlocked] = useState(
     !!startup.recovery && !startup.project,
   );
+  const [videoEpoch, setVideoEpoch] = useState(0);
+  const videoPause = useRef(null),
+    videoTransport = useRef(null);
+  const [videoPlayback, setVideoPlayback] = useState({
+    ready: false,
+    playing: false,
+  });
+  const [videoFrame, setVideoFrame] = useState(null);
   const ai = useVoiceStudio(p, {
     onStart: () => {
+      videoPause.current?.();
       setPlaying(false);
       voice.stop();
     },
     onFrame: setIndex,
+    onSpeedChange: (aiSpeed) => setP((prev) => ({ ...prev, aiSpeed })),
   });
+  const imageGeneration = useImageGeneration(p, (id, imageRef) =>
+    setP((prev) => ({
+      ...prev,
+      scenes: prev.scenes.map((scene) =>
+        scene.id === id
+          ? {
+              ...scene,
+              imageRef,
+              imageFit: "contain",
+              imageScale: 1,
+              imagePosition: { x: 50, y: 50 },
+            }
+          : scene,
+      ),
+    })),
+  );
+  const setCharacterReference = (referenceImage) =>
+    setP((prev) => ({
+      ...prev,
+      character: { ...prev.character, referenceImage },
+    }));
   const previewProject = {
     ...p,
     scenes: p.scenes.map((scene, i) => {
@@ -102,12 +141,21 @@ export default function App() {
     }),
   };
   const frameDuration = previewProject.scenes[index]?.duration;
-  const input = useRef(null);
+  const input = useRef(null),
+    projectImportEpoch = useRef(0);
+  const [importingProject, setImportingProject] = useState(false);
+  useEffect(
+    () => () => {
+      projectImportEpoch.current++;
+    },
+    [],
+  );
   const update = (patch) => setP((prev) => ({ ...prev, ...patch }));
   const stop = () => {
     setPlaying(false);
     voice.stop();
     ai.pause();
+    videoPause.current?.();
   };
   useEffect(() => {
     if (!voice.available()) return;
@@ -143,6 +191,7 @@ export default function App() {
   function save() {
     try {
       const result = saveProject(localStorage, p);
+      setLastSavedProject(p);
       setBackups(result.backups);
       setRecovery(null);
       setMessage(
@@ -154,9 +203,30 @@ export default function App() {
       setMessage(`保存失败：${err.message} 当前编辑内容和原有存档均已保留。`);
     }
   }
+  useEffect(() => {
+    if (
+      p === lastSavedProject &&
+      !videoPlayback.rendering &&
+      !videoPlayback.pendingDownload &&
+      !videoPlayback.timingDraftDirty
+    )
+      return;
+    const warn = (e) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [
+    p,
+    lastSavedProject,
+    videoPlayback.rendering,
+    videoPlayback.pendingDownload,
+    videoPlayback.timingDraftDirty,
+  ]);
   function exportProject() {
     try {
-      downloadProject(p);
+      downloadProject(p, { maxBytes: PROJECT_FILE_BYTES_LIMIT });
     } catch (err) {
       setMessage(`导出失败：${err.message} 当前内容未被修改。`);
     }
@@ -205,22 +275,42 @@ export default function App() {
     const file = e.target.files[0];
     e.target.value = "";
     if (!file) return;
+    const epoch = ++projectImportEpoch.current;
+    setImportingProject(true);
     try {
-      if (file.size > PROJECT_BYTES_LIMIT)
+      if (file.size > PROJECT_FILE_BYTES_LIMIT)
         throw Error(
-          "项目总大小超过 5 MB，请缩短文本或减少分镜后再保存或导出。",
+          "项目文件超过 50 MB，原工作区未修改。请保留原图并减小副本。",
         );
-      const project = parseProject(await file.text());
+      const project = parseProject(await file.text(), {
+        maxBytes: PROJECT_FILE_BYTES_LIMIT,
+      });
+      if (epoch !== projectImportEpoch.current) return;
+      if (
+        !(await verifyProjectImages(project, {
+          isCurrent: () => epoch === projectImportEpoch.current,
+        }))
+      )
+        return;
       if (!window.confirm("导入将替换当前工作区，未保存内容会丢失。是否继续？"))
         return;
       stop();
       ai.reset();
+      setVideoEpoch((v) => v + 1);
+      imageGeneration.reset();
       setP(project);
       setBlocked(false);
       setIndex(0);
-      setMessage("导入成功，点击保存可存入当前浏览器。");
+      setMessage(
+        file.size > PROJECT_BYTES_LIMIT
+          ? "已导入大项目；超过浏览器 5 MB 限额，请用导出 JSON 文件保存最新修改，刷新前务必备份，MP3 请另存。"
+          : "导入成功，点击保存可存入当前浏览器。",
+      );
     } catch (err) {
-      setMessage(`导入失败：${err.message}`);
+      if (epoch === projectImportEpoch.current)
+        setMessage(`导入失败：${err.message}`);
+    } finally {
+      if (epoch === projectImportEpoch.current) setImportingProject(false);
     }
   }
   function speak(s) {
@@ -248,12 +338,13 @@ export default function App() {
           </span>
         </a>
         <div className="workspace-label">
-          创作工作台 <span>V3.0</span>
+          创作工作台 <span>V3.1</span>
         </div>
         <nav>
           {tabs.map(([id, label, Icon], i) => (
             <button
               key={id}
+              aria-label={label}
               className={tab === id ? "active" : ""}
               onClick={() => setTab(id)}
             >
@@ -276,14 +367,22 @@ export default function App() {
             <span>新建故事项目</span>
           </div>
           <div className="header-actions">
-            <button onClick={() => input.current.click()}>
+            <button
+              disabled={importingProject}
+              onClick={() => input.current.click()}
+            >
               <Upload size={16} />
-              <span>导入项目</span>
+              <span>{importingProject ? "读取项目中…" : "导入项目"}</span>
             </button>
             <button onClick={exportProject} disabled={blocked}>
               <Download size={16} />
               <span>导出 JSON</span>
             </button>
+            {p !== lastSavedProject && (
+              <span className="muted" role="status">
+                有未保存更改
+              </span>
+            )}
             <button className="primary" onClick={save} disabled={blocked}>
               <Save size={16} />
               保存项目
@@ -375,6 +474,20 @@ export default function App() {
                     秒
                   </span>
                 </div>
+                <VideoStudioPanel
+                  key={videoEpoch}
+                  pauseRef={videoPause}
+                  transportRef={videoTransport}
+                  onPlaybackChange={setVideoPlayback}
+                  onPreviewFrame={setVideoFrame}
+                  project={p}
+                  ai={ai}
+                  hidden={tab !== "video"}
+                  onStart={stop}
+                  onFrame={setIndex}
+                  onTimingChange={(videoTiming) => update({ videoTiming })}
+                />
+                {tab === "ai" && <ServiceStatus />}
                 <AIVoicePanel project={p} studio={ai} hidden={tab !== "ai"} />
                 {tab === "article" && (
                   <>
@@ -544,6 +657,9 @@ export default function App() {
                         />
                         <SceneImageSettings
                           scene={s}
+                          project={p}
+                          generation={imageGeneration}
+                          onSetStandard={setCharacterReference}
                           onChange={(patch) => editVisualScene(s.id, patch)}
                         />
                         <div className="scene-bottom">
@@ -597,6 +713,10 @@ export default function App() {
                         }
                       />
                     ))}
+                    <CharacterReference
+                      reference={p.character.referenceImage}
+                      onChange={setCharacterReference}
+                    />
                     <label className="field">
                       <span>统一画风</span>
                       <div className="style-options">
@@ -625,10 +745,13 @@ export default function App() {
                       >
                         <option value="9:16">9:16 · 竖屏短视频</option>
                         <option value="16:9">16:9 · 横屏故事</option>
+                        <option value="4:5">4:5 · 社交媒体图文</option>
                       </select>
                     </label>
                     <div className="tip">
-                      当前预览使用固定演示图形；人物和画面描述不会生成真实图片。图片服务接口已预留。
+                      配图请到故事分镜点击“AI
+                      生成配图”，或上传本地图片。只有用户确认后才调用图片
+                      API；人物一致性和无文字效果需人工检查。
                     </div>
                     <button className="primary" onClick={save}>
                       <Save size={16} />
@@ -712,7 +835,17 @@ export default function App() {
                 )}
               </main>
               <Preview
-                project={previewProject}
+                project={
+                  tab === "video"
+                    ? { ...previewProject, ratio: "9:16" }
+                    : previewProject
+                }
+                videoFrame={tab === "video" ? videoFrame : null}
+                onSeekScene={
+                  tab === "video" && videoPlayback.ready
+                    ? (i) => videoTransport.current?.seekScene(i)
+                    : null
+                }
                 audioRef={ai.audioRef}
                 audioSelected={
                   ai.selected === "article"
@@ -742,10 +875,18 @@ export default function App() {
                 }
                 index={index}
                 setIndex={setIndex}
-                playing={playing || ai.playing}
+                playing={
+                  tab === "video" && videoPlayback.ready
+                    ? videoPlayback.playing
+                    : playing || ai.playing
+                }
                 stop={stop}
                 toggle={() => {
                   voice.stop();
+                  if (tab === "video" && videoPlayback.ready) {
+                    videoTransport.current?.toggle();
+                    return;
+                  }
                   if (ai.playing || (tab === "ai" && ai.selected)) {
                     ai.toggle();
                     return;
@@ -757,8 +898,43 @@ export default function App() {
             </div>
           </>
         )}
+        {imageGeneration.error && (
+          <div className="recovery-panel" role="alert">
+            {imageGeneration.error}
+          </div>
+        )}
+        {imageGeneration.pending && (
+          <div className="recovery-panel">
+            <a
+              href={imageGeneration.pending.imageRef.dataUrl}
+              download="unapplied-illustration.jpg"
+            >
+              下载未应用的生成结果
+            </a>
+            <button
+              onClick={() => {
+                if (window.confirm("将结果应用到原分镜？会替换该镜当前图片。"))
+                  imageGeneration.applyPending();
+              }}
+            >
+              应用到原分镜
+            </button>
+            <button
+              onClick={() => {
+                if (
+                  window.confirm(
+                    "放弃这张未应用的生成图片？如尚未下载，结果将无法恢复。",
+                  )
+                )
+                  imageGeneration.clearPending();
+              }}
+            >
+              放弃未应用图片
+            </button>
+          </div>
+        )}
         <footer>
-          用故事连接语言，用创作发现可能。<span>STORY STUDIO / V3</span>
+          用故事连接语言，用创作发现可能。<span>STORY STUDIO / V3.1</span>
         </footer>
       </div>
       {message && (

@@ -3,6 +3,8 @@ import StoryFrame from "./StoryFrame.jsx";
 import { Play, Pause, ChevronLeft, ChevronRight, Mountain } from "lucide-react";
 export default function Preview({
   project,
+  videoFrame,
+  onSeekScene,
   syncLabel,
   audioRef,
   audioSelected,
@@ -17,6 +19,7 @@ export default function Preview({
   const change = (i) => {
     stop();
     setIndex(i);
+    onSeekScene?.(i);
   };
   return (
     <aside className="preview-panel">
@@ -28,6 +31,7 @@ export default function Preview({
       <div className="preview-stage v3-preview-stage">
         <StoryFrame
           project={project}
+          overrideFrame={videoFrame}
           scene={scene}
           index={index}
           audioRef={audioRef}
@@ -86,7 +90,7 @@ export default function Preview({
       </div>
       <div className="export-note">
         <span>MP4 视频导出</span>
-        <span className="badge">待开发</span>
+        <span className="badge">到左侧“视频预览与导出”</span>
       </div>
     </aside>
   );

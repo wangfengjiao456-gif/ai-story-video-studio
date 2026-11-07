@@ -51,8 +51,8 @@ test("旧 V1/V2 JSON 无 V3 字段时使用合理默认值，保留故事与提�
   delete p.subtitleSafeArea;
   const loaded = parseProject(JSON.stringify(p));
   assert.equal(loaded.videoTemplate, "picturebook");
-  assert.equal(loaded.subtitleStyle.height, 28);
-  assert.equal(loaded.scenes[0].imageFit, "cover");
+  assert.equal(loaded.subtitleStyle.height, 32);
+  assert.equal(loaded.scenes[0].imageFit, "contain");
   assert.equal(loaded.scenes[0].description, p.scenes[0].description);
   assert.equal(loaded.english, p.english);
 });

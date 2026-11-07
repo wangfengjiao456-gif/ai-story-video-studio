@@ -1,19 +1,21 @@
 // Final-frame coordinates, independent of device width. Long content is paginated, never clipped.
 export const FRAME_WIDTH = 1080;
 export function frameGeometry(style, position, ratio = "9:16") {
-  const height = ratio === "16:9" ? 607.5 : 1920;
-  const panelHeight = Math.max(
-    (height * style.height) / 100,
-    height < 1000 ? 320 : 0,
-  );
+  const height = ratio === "16:9" ? 607.5 : ratio === "4:5" ? 1350 : 1920;
   const bottom = (height * position) / 100;
+  const top = style.topMargin ?? 48;
+  const panelHeight = Math.min(
+    height,
+    Math.max((height * style.height) / 100, bottom + top + 180),
+  );
   return {
     width: FRAME_WIDTH,
     height,
     panelHeight,
     bottom,
+    top,
     textWidth: FRAME_WIDTH * 0.8,
-    textHeight: Math.max(100, panelHeight - bottom - 32),
+    textHeight: panelHeight - bottom - top,
     left: FRAME_WIDTH * 0.1,
   };
 }

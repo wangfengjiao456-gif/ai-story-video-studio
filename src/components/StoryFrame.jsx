@@ -1,8 +1,10 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
-  normalizePresentation,
-  safeTextColor,
-} from "../presentation/settings.js";
+  framePlan,
+  paintFrame,
+  FONT_STACK,
+} from "../presentation/frameRenderer.js";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { normalizePresentation } from "../presentation/settings.js";
 import {
   frameGeometry,
   subtitlePages,
@@ -10,6 +12,7 @@ import {
 } from "../presentation/layout.js";
 export default function StoryFrame({
   project,
+  overrideFrame,
   scene,
   index,
   audioRef,
@@ -20,7 +23,6 @@ export default function StoryFrame({
     s = p.subtitleStyle,
     geometry = frameGeometry(s, p.subtitlePosition, p.ratio),
     host = useRef(null),
-    [width, setWidth] = useState(260),
     [page, setPage] = useState(0);
   const measure = useMemo(() => {
     if (typeof document === "undefined") return undefined;
@@ -30,7 +32,7 @@ export default function StoryFrame({
     return (ch, size) => {
       const key = ch + size;
       if (!cache.has(key)) {
-        ctx.font = `600 ${size}px Arial, "PingFang SC", "Microsoft YaHei", sans-serif`;
+        ctx.font = `600 ${size}px ${FONT_STACK}`;
         cache.set(key, ctx.measureText(ch).width);
       }
       return cache.get(key);
@@ -55,19 +57,6 @@ export default function StoryFrame({
       measure,
     ],
   );
-  useEffect(() => {
-    const element = host.current;
-    if (!element) return;
-    const update = () => setWidth(element.getBoundingClientRect().width || 260);
-    update();
-    if (typeof ResizeObserver !== "undefined") {
-      const observer = new ResizeObserver(update);
-      observer.observe(element);
-      return () => observer.disconnect();
-    }
-    window.addEventListener("resize", update);
-    return () => window.removeEventListener("resize", update);
-  }, []);
   useEffect(() => {
     setPage(0);
   }, [index, scene?.id, scene?.english, scene?.chinese, layout.pages.length]);
@@ -98,151 +87,121 @@ export default function StoryFrame({
     audioRange?.end,
     layout.pages.length,
   ]);
-  const current = layout.pages[Math.min(page, layout.pages.length - 1)];
-  const immersive = p.videoTemplate === "immersive",
-    background = immersive ? "#081812" : s.backgroundColor;
-  const enColor = safeTextColor(
-    s.englishColor,
-    background,
-    s.opacity,
-    immersive ? "#ffffff" : "#173e2e",
+  const canvasRef = useRef(null),
+    decoded = useRef(null),
+    [ready, setReady] = useState(null),
+    [renderError, setRenderError] = useState("");
+  const basePlan = useMemo(
+    () => framePlan(project, scene, measure),
+    [
+      project.ratio,
+      project.videoTemplate,
+      project.subtitles,
+      JSON.stringify(project.subtitleStyle),
+      project.subtitlePosition,
+      scene,
+      measure,
+    ],
   );
-  const zhColor = safeTextColor(
-    s.chineseColor,
-    background,
-    s.opacity,
-    immersive ? "#ffffff" : "#173e2e",
-  );
-  const hexToRgb = (color) =>
-    color
-      .slice(1)
-      .match(/../g)
-      .map((x) => parseInt(x, 16))
-      .join(",");
-  const lines = (values, size, lineHeight, color) => (
-    <div
-      style={{ fontSize: size, lineHeight: `${size * lineHeight}px`, color }}
-    >
-      {values.map((line, i) => (
-        <div
-          className="subtitle-line"
-          key={i}
-          style={{ height: size * lineHeight }}
-        >
-          {line.replace(/\n$/, "")}
-        </div>
-      ))}
-    </div>
-  );
+  const plan = overrideFrame?.plan || basePlan,
+    activePage = overrideFrame?.page ?? page,
+    activeScene = plan.scene;
+  const renderVersion = useMemo(() => ({}), [plan, activePage]);
+  useEffect(() => {
+    let cancelled = false;
+    setRenderError("");
+    async function paint() {
+      try {
+        let image = null;
+        if (activeScene?.imageRef) {
+          const src = activeScene.imageRef.dataUrl;
+          if (decoded.current?.src === src) image = decoded.current.image;
+          else {
+            image = new Image();
+            await new Promise((resolve, reject) => {
+              image.onload = resolve;
+              image.onerror = () => reject(Error("图片无法解码，请替换图片。"));
+              image.src = src;
+            });
+            if (cancelled) return;
+            decoded.current = { src, image };
+          }
+        }
+        if (cancelled) return;
+        const ctx = canvasRef.current?.getContext("2d");
+        if (!ctx) throw Error("当前浏览器不支持画面渲染。");
+        paintFrame(ctx, plan, activePage, image);
+        setReady(renderVersion);
+      } catch (err) {
+        if (!cancelled) setRenderError(err.message);
+      }
+    }
+    paint();
+    return () => {
+      cancelled = true;
+    };
+  }, [renderVersion]);
+  function exportFrame() {
+    if (ready !== renderVersion) return;
+    canvasRef.current.toBlob((blob) => {
+      if (!blob) {
+        setRenderError("画面导出失败，请重试。");
+        return;
+      }
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `scene-${index + 1}-page-${page + 1}.png`;
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
+    }, "image/png");
+  }
+  const immersive = p.videoTemplate === "immersive";
   return (
     <>
       <div
         ref={host}
         className="v3-frame-shell"
-        style={{ aspectRatio: `1080 / ${geometry.height}` }}
+        style={{ aspectRatio: `${plan.outputWidth} / ${plan.outputHeight}` }}
         aria-label={`模板 ${immersive ? "B" : "A"} 视频预览`}
       >
-        <div
-          className={`v3-frame-content ${immersive ? "immersive" : "picturebook"}`}
-          style={{
-            width: 1080,
-            height: geometry.height,
-            transform: `scale(${width / 1080})`,
-          }}
-        >
-          <div
-            className="v3-art"
-            style={{
-              height: immersive
-                ? "100%"
-                : geometry.height - geometry.panelHeight,
-            }}
-          >
-            {scene?.imageRef ? (
-              <img
-                src={scene.imageRef.dataUrl}
-                alt="当前分镜上传图片"
-                style={{
-                  objectFit: scene.imageFit || "cover",
-                  objectPosition: `${scene.imagePosition?.x ?? 50}% ${scene.imagePosition?.y ?? 50}%`,
-                  transform: `scale(${scene.imageScale ?? 1})`,
-                  transformOrigin: `${scene.imagePosition?.x ?? 50}% ${scene.imagePosition?.y ?? 50}%`,
-                }}
-              />
-            ) : (
-              <>
-                <div className="sun" />
-                <div className="hill hill-back" />
-                <div className="hill hill-front" />
-                <div className="tree tree-one" />
-                <div className="tree tree-two" />
-                <div className="traveler">♟</div>
-              </>
-            )}
-          </div>
-          {immersive ? (
-            <div
-              className="v3-subtitle-backdrop"
-              style={{
-                height: geometry.panelHeight + 220,
-                background: `linear-gradient(to bottom, transparent 0%, rgba(8,24,18,${s.opacity}) 220px, rgba(8,24,18,${s.opacity}) 100%)`,
-              }}
-            />
-          ) : (
-            <div
-              className="v3-subtitle-backdrop"
-              style={{
-                height: geometry.panelHeight,
-                background: `rgba(${hexToRgb(background)},${s.opacity})`,
-              }}
-            />
-          )}
-          <div
-            className="v3-subtitle-text"
-            style={{
-              left: geometry.left,
-              bottom: geometry.bottom,
-              width: geometry.textWidth,
-              textAlign: s.align,
-              textShadow: immersive ? "0 2px 6px rgba(0,0,0,.8)" : "none",
-            }}
-          >
-            {lines(
-              current.english,
-              layout.englishSize,
-              s.englishLineHeight,
-              enColor,
-            )}
-            {!!current.english.length && !!current.chinese.length && (
-              <div style={{ height: s.gap }} />
-            )}
-            {lines(
-              current.chinese,
-              layout.chineseSize,
-              s.chineseLineHeight,
-              zhColor,
-            )}
-            {!scene && (
-              <div style={{ fontSize: 48, color: enColor }}>
-                添加分镜，开始你的故事
-              </div>
-            )}
-          </div>
-        </div>
+        <canvas
+          ref={canvasRef}
+          className="v31-frame-canvas"
+          style={{ visibility: ready === renderVersion ? "visible" : "hidden" }}
+          width={plan.outputWidth}
+          height={plan.outputHeight}
+          aria-label="当前分镜画面与字幕"
+        />
         {p.subtitleSafeArea && (
           <div
             className="safe-area-guide"
             aria-label="编辑辅助安全区，不属于视频画面"
           >
-            <span>字幕安全区 · 仅编辑辅助</span>
+            <span>平台安全区域 · 仅供参考</span>
           </div>
         )}
       </div>
+      {renderError && (
+        <p className="validation-error" role="alert">
+          {renderError}
+        </p>
+      )}
+      <button
+        disabled={ready !== renderVersion || !!renderError}
+        onClick={exportFrame}
+      >
+        导出当前字幕页 PNG
+      </button>
       <div className="frame-legend">
-        {scene?.imageRef ? "本分镜上传图片" : "演示占位画面 · 非 AI 生成"}
-        {p.ratio === "16:9" ? " · 横屏兼容布局" : ""}
+        {scene?.imageRef
+          ? scene.imageRef.kind === "generated"
+            ? "OpenAI 生成配图"
+            : "本分镜上传图片"
+          : "演示占位画面 · 非 AI 生成"}
+        {p.ratio === "16:9" ? " · 横屏教学" : ""}
       </div>
-      {layout.pages.length > 1 && (
+      {!overrideFrame && layout.pages.length > 1 && (
         <div className="subtitle-pages">
           <button
             aria-label="上一字幕页"

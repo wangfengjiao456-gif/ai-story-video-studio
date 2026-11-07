@@ -3,7 +3,13 @@ on:
   pull_request:
   push:
     branches:
-      [main, feat/story-studio-v1, feat/elevenlabs-v2, feat/story-studio-v3]
+      [
+        main,
+        feat/story-studio-v1,
+        feat/elevenlabs-v2,
+        feat/story-studio-v3,
+        feat/story-studio-v3-1,
+      ]
 permissions:
   contents: read
 jobs:
@@ -16,5 +22,28 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
+      - run: npm run lint
       - run: npm test
       - run: npm run build
+      - name: Install FFmpeg for real encoding tests
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg fonts-noto-cjk
+      - run: npm run test:renderer
+      - name: Build the deployable renderer image
+        run: docker build -f renderer/Dockerfile -t story-renderer:ci .
+      - name: Run real encoding tests as the Docker non-root user
+        run: docker run --rm --cpus=2 --memory=2g story-renderer:ci python test_renderer.py
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
+        timeout-minutes: 10
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: video-regression
+          path: |
+            work/e2e/*.log
+            work/mp4-regression/browser-export.mp4
+            work/deployment-verification/preview-render.mp4
+            work/mp4-regression/frame-evidence.json
+            work/mp4-regression/frame-verification.json
+            work/mp4-regression/expected-scene-*.png
+          retention-days: 7

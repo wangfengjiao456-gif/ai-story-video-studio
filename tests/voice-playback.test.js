@@ -262,3 +262,87 @@ test("暂停时拖动音频进度或返回开头，分镜仍跟随音频时间�
     await h.cleanup();
   }
 });
+
+test("saved voice speed initializes and follows imported project settings without generating audio", async () => {
+  const p = { ...project(), aiSpeed: 0.9 };
+  const h = await mount(p);
+  try {
+    assert.equal(h.studio.speed, 0.9);
+    await h.update({ ...p, aiSpeed: 1.0 });
+    assert.equal(h.studio.speed, 1.0);
+    assert.deepEqual(h.studio.assets, {});
+  } finally {
+    await h.cleanup();
+  }
+});
+
+test("late play rejection cannot pause a newer clip or report an error after explicit pause", async () => {
+  globalThis.fetch = async () => mockResponse();
+  const h = await mount();
+  try {
+    await h.generate("article");
+    await h.generate("s1");
+    let rejectFirst,
+      calls = 0;
+    h.audio.play = () => {
+      h.audio.paused = false;
+      h.studio.audioProps.onPlay();
+      return ++calls === 1
+        ? new Promise((_, reject) => {
+            rejectFirst = reject;
+          })
+        : Promise.resolve();
+    };
+    let first;
+    await act(async () => {
+      first = h.studio.start("article");
+    });
+    await act(async () => h.studio.start("s1"));
+    await act(async () => {
+      rejectFirst(Error("interrupted old request"));
+      await first;
+    });
+    assert.equal(h.studio.selected, "s1");
+    assert.equal(h.studio.playing, true);
+    assert.equal(h.studio.error, "");
+    let rejectPaused;
+    h.audio.play = () =>
+      new Promise((_, reject) => {
+        rejectPaused = reject;
+      });
+    let paused;
+    await act(async () => {
+      paused = h.studio.start("s1");
+    });
+    await act(async () => h.studio.pause());
+    await act(async () => {
+      rejectPaused(Error("paused"));
+      await paused;
+    });
+    assert.equal(h.studio.playing, false);
+    assert.equal(h.studio.error, "");
+  } finally {
+    await h.cleanup();
+  }
+});
+
+test("切换 MP3 的早期 NaN 时长不误报，真实元数据恢复时清除时长错误", async () => {
+  globalThis.fetch = async () => mockResponse();
+  const h = await mount();
+  try {
+    await h.generate("article");
+    h.audio.duration = NaN;
+    h.audio.readyState = 0;
+    await act(async () => h.studio.audioProps.onDurationChange());
+    assert.equal(h.studio.error, "");
+    h.audio.readyState = 1;
+    await act(async () => h.studio.audioProps.onLoadedMetadata());
+    assert.match(h.studio.error, /无法读取真实音频时长/);
+    h.audio.duration = 25;
+    await act(async () => h.studio.audioProps.onLoadedMetadata());
+    assert.equal(h.studio.error, "");
+    assert.equal(h.studio.current.duration, 25);
+  } finally {
+    await h.cleanup();
+  }
+});

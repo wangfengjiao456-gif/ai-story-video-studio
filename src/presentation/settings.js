@@ -7,15 +7,21 @@ export const STYLE_LIMITS = {
   height: [25, 40, 1],
   opacity: [0.85, 1, 0.01],
   gap: [12, 32, 2],
+  topMargin: [16, 96, 4],
+  stroke: [0, 3, 0.5],
+  shadow: [0, 12, 1],
 };
 export const templateDefaults = (template = "picturebook") => ({
   englishSize: 54,
   chineseSize: 40,
   englishLineHeight: 1.4,
   chineseLineHeight: 1.45,
-  height: 28,
+  height: 32,
   opacity: template === "immersive" ? 0.9 : 1,
   gap: 20,
+  topMargin: 48,
+  stroke: template === "immersive" ? 1 : 0,
+  shadow: template === "immersive" ? 6 : 0,
   englishColor: template === "immersive" ? "#ffffff" : "#173e2e",
   chineseColor: template === "immersive" ? "#f2f1df" : "#405446",
   backgroundColor: "#fff8ec",
@@ -24,11 +30,11 @@ export const templateDefaults = (template = "picturebook") => ({
 export const presentationDefaults = () => ({
   videoTemplate: "picturebook",
   subtitleStyle: templateDefaults(),
-  subtitlePosition: 6,
+  subtitlePosition: 16,
   subtitleSafeArea: false,
 });
 export const imageDefaults = () => ({
-  imageFit: "cover",
+  imageFit: "contain",
   imagePosition: { x: 50, y: 50 },
   imageScale: 1,
 });
@@ -56,7 +62,7 @@ export function validatePresentation(p) {
   const color = (v) => typeof v === "string" && /^#[0-9a-f]{6}$/i.test(v);
   if (p.videoTemplate !== undefined && !TEMPLATES.includes(p.videoTemplate))
     fail();
-  if (p.subtitlePosition !== undefined && !number(p.subtitlePosition, 6, 12))
+  if (p.subtitlePosition !== undefined && !number(p.subtitlePosition, 4, 20))
     fail();
   if (
     p.subtitleSafeArea !== undefined &&
