@@ -1,3 +1,4 @@
+import { parseTimingDraft } from "../video/timingDraft.js";
 import { isFresh } from "../services/aiVoice.js";
 import {
   audioFingerprint,
@@ -37,7 +38,8 @@ export default function VideoStudioPanel({
     [checkingRenderer, setCheckingRenderer] = useState(false);
   const [aligning, setAligning] = useState(false),
     [confirmAlign, setConfirmAlign] = useState(false),
-    [draft, setDraft] = useState([]);
+    [draft, setDraft] = useState([]),
+    [draftDirty, setDraftDirty] = useState(false);
   const alignmentBusy = useRef(false);
   const [source, setSource] = useState("article"),
     [prepared, setPrepared] = useState(null),
@@ -69,6 +71,8 @@ export default function VideoStudioPanel({
     importController = useRef(null),
     inputContext = useRef(null),
     pendingSeek = useRef(null),
+    confirmedDraft = useRef([]),
+    playEpoch = useRef(0),
     prepareEpoch = useRef(0),
     prepareController = useRef(null),
     recoveryLock = useRef(false),
@@ -152,6 +156,7 @@ export default function VideoStudioPanel({
   timelineRef.current = timeline;
   const frame = timeline ? frameAt(timeline, time) : null;
   const pause = () => {
+    playEpoch.current++;
     audio.current?.pause();
     if (!startingInspector.current) inspector.current?.pause();
     setPlaying(false);
@@ -250,6 +255,7 @@ export default function VideoStudioPanel({
       playing,
       rendering: !!progress && progress.percent < 100,
       pendingDownload: !!pendingDownload,
+      timingDraftDirty: draftDirty,
     });
   }, [
     !!timeline,
@@ -257,6 +263,7 @@ export default function VideoStudioPanel({
     !!progress && progress.percent < 100,
     onPlaybackChange,
     !!pendingDownload,
+    draftDirty,
   ]);
   useEffect(() => {
     if (!transportRef) return;
@@ -300,6 +307,21 @@ export default function VideoStudioPanel({
   useEffect(() => {
     if (hidden) pause();
   }, [hidden]);
+  function resetPlaybackClock() {
+    if (pendingSeek.current)
+      audio.current?.removeEventListener("loadedmetadata", pendingSeek.current);
+    pendingSeek.current = null;
+    try {
+      if (audio.current) audio.current.currentTime = 0;
+    } catch {}
+    cursor.current = 0;
+    setTime(0);
+  }
+  function resetTimingDraft(cues) {
+    confirmedDraft.current = cues.map((c) => ({ ...c }));
+    setDraft(confirmedDraft.current);
+    setDraftDirty(false);
+  }
   function saveCues(cues, source = "manual") {
     if (!isFresh(imported, project.english, ai.speed))
       throw Error(
@@ -316,9 +338,9 @@ export default function VideoStudioPanel({
     const signature = timingSignature(project, assets, ai.speed, "article");
     pause();
     onTimingChange({ signature, cues, source });
+    resetTimingDraft(cues);
     setPrepared({ assets, speed: ai.speed, source: "article" });
-    cursor.current = 0;
-    setTime(0);
+    resetPlaybackClock();
     setError("");
   }
   async function alignImported() {
@@ -367,7 +389,7 @@ export default function VideoStudioPanel({
     }
   }
   async function prepare() {
-    if (preparing || prepareController.current) return;
+    if (preparing || prepareController.current || draftDirty) return;
     const request = new AbortController();
     prepareController.current = request;
     pause();
@@ -398,10 +420,21 @@ export default function VideoStudioPanel({
         keys.some((key) => assets[key].url !== currentAssets.current[key]?.url)
       )
         throw Error("读取期间配音已替换，请重新准备视频。");
-      buildVideoTimeline(project, assets, ai.speed, mode, measure);
+      const preparedTimeline = buildVideoTimeline(
+        project,
+        assets,
+        ai.speed,
+        mode,
+        measure,
+      );
+      resetTimingDraft(
+        preparedTimeline.ranges.map((r) => ({
+          start: r.start,
+          end: Math.min(r.end, preparedTimeline.sourceDuration),
+        })),
+      );
       setPrepared({ assets, speed: ai.speed, source: mode });
-      setTime(0);
-      cursor.current = 0;
+      resetPlaybackClock();
     } catch (err) {
       if (epoch === prepareEpoch.current && err.name !== "AbortError")
         setError(err.message);
@@ -473,7 +506,7 @@ export default function VideoStudioPanel({
         ai.speed,
         "article",
       );
-      setDraft(
+      resetTimingDraft(
         project.videoTiming?.signature === signature && project.videoTiming.cues
           ? project.videoTiming.cues
           : project.scenes.map(() => ({ start: "", end: "" })),
@@ -522,7 +555,13 @@ export default function VideoStudioPanel({
     setTime(value);
     if (play) {
       onStart?.();
+      const epoch = ++playEpoch.current;
       element.play().catch(() => {
+        if (
+          epoch !== playEpoch.current ||
+          element.getAttribute("src") !== a.url
+        )
+          return;
         setPlaying(false);
         setError("浏览器阻止播放，请点击继续。进度已保留。");
       });
@@ -611,6 +650,10 @@ export default function VideoStudioPanel({
   }
   async function exportMp4() {
     if (!timeline || busyRef.current || recoveryLock.current) return;
+    if (draftDirty) {
+      setError("有未应用的起止时间，请先应用或放弃修改，再导出。");
+      return;
+    }
     if (timeline.precision === "estimated") {
       setError(
         "整篇配音尚无可验证时间戳，不能按估算时间导出。请确认全部起止时间，或下载 MP3 后导入并执行逐句对齐，也可使用逐镜 MP3。",
@@ -683,25 +726,39 @@ export default function VideoStudioPanel({
       temp.remove();
     }
   }
-  function timing(index, field, value) {
-    if (!timeline) return;
-    const cues = timeline.ranges.map((r) => ({
-      start: r.start,
-      end: Math.min(r.end, timeline.sourceDuration),
-    }));
-    if (value.trim() === "") {
-      setError("时间不能为空。");
-      return;
-    }
-    cues[index][field] = Number(value);
-    if (!validateCues(cues, cues.length, timeline.sourceDuration)) {
-      setError("时间必须位于 MP3 内，结束晚于开始，并且不能与相邻分镜重叠。");
-      return;
-    }
+  function editTiming(index, field, value) {
     pause();
+    setDraftDirty(true);
     setError("");
-    onTimingChange({ signature: timeline.signature, cues, source: "manual" });
-    if (source === "imported") setDraft(cues);
+    setDraft((previous) =>
+      project.scenes.map((_, i) =>
+        i === index
+          ? { ...previous[i], [field]: value }
+          : previous[i] || { start: "", end: "" },
+      ),
+    );
+  }
+  function applyTimingDraft() {
+    try {
+      const cues = parseTimingDraft(
+        draft,
+        project.scenes.length,
+        source === "imported" ? imported.duration : timeline.sourceDuration,
+      );
+      if (source === "imported") saveCues(cues);
+      else {
+        pause();
+        onTimingChange({
+          signature: timeline.signature,
+          cues,
+          source: "manual",
+        });
+        resetTimingDraft(cues);
+        setError("");
+      }
+    } catch (error) {
+      setError(error.message);
+    }
   }
   return (
     <section
@@ -749,6 +806,7 @@ export default function VideoStudioPanel({
           onChange={(e) => {
             pause();
             setSource(e.target.value);
+            resetTimingDraft([]);
             setPrepared(null);
           }}
         >
@@ -768,7 +826,10 @@ export default function VideoStudioPanel({
           accept="audio/mpeg,.mp3"
           onChange={importMp3}
         />
-        <button disabled={preparing || busyRef.current} onClick={prepare}>
+        <button
+          disabled={preparing || busyRef.current || draftDirty}
+          onClick={prepare}
+        >
           {preparing
             ? "读取真实时长…"
             : prepared
@@ -834,37 +895,13 @@ export default function VideoStudioPanel({
                       max={imported.duration}
                       step="0.01"
                       value={draft[i]?.[k] ?? ""}
-                      onChange={(e) =>
-                        setDraft((d) =>
-                          project.scenes.map((_, j) =>
-                            j === i
-                              ? { ...d[j], [k]: e.target.value }
-                              : d[j] || { start: "", end: "" },
-                          ),
-                        )
-                      }
+                      onChange={(e) => editTiming(i, k, e.target.value)}
                     />
                   </label>
                 ))}
               </div>
             ))}
-            <button
-              disabled={aligning}
-              onClick={() => {
-                try {
-                  if (draft.some((c) => c.start === "" || c.end === ""))
-                    throw Error("请填写每镜的起止时间。");
-                  saveCues(
-                    draft.map((c) => ({
-                      start: Number(c.start),
-                      end: Number(c.end),
-                    })),
-                  );
-                } catch (e) {
-                  setError(e.message);
-                }
-              }}
-            >
+            <button disabled={aligning} onClick={applyTimingDraft}>
               确认并保存全部起止时间
             </button>
           </details>
@@ -879,6 +916,22 @@ export default function VideoStudioPanel({
         MB；较大项目可导出最多 50 MB 的 JSON
         文件并重新导入。保存失败不会覆盖旧存档，刷新前请先完成文件备份。
       </p>
+      {draftDirty && (
+        <section className="note" role="status">
+          <p>
+            有未应用的起止时间。预览仍使用上次确认的时轴，导出已暂停；请应用或放弃修改。
+          </p>
+          <button
+            onClick={() => {
+              setDraft(confirmedDraft.current);
+              setDraftDirty(false);
+              setError("");
+            }}
+          >
+            放弃时间修改
+          </button>
+        </section>
+      )}
       {(error || timingError) && (
         <p className="validation-error" role="alert">
           {error || timingError}
@@ -976,38 +1029,21 @@ export default function VideoStudioPanel({
                       min="0"
                       max={timeline.sourceDuration}
                       step="0.01"
-                      defaultValue={Math.min(
-                        range[field],
-                        timeline.sourceDuration,
-                      ).toFixed(3)}
-                      key={`${timeline.signature}-${range[field]}`}
-                      onBlur={(e) => timing(i, field, e.target.value)}
+                      value={draft[i]?.[field] ?? range[field]}
+                      onChange={(e) => editTiming(i, field, e.target.value)}
                     />
                   </label>
                 ))}
               </div>
             ))}
+            <button
+              disabled={aligning || busyRef.current || !draftDirty}
+              onClick={applyTimingDraft}
+            >
+              应用起止时间
+            </button>
             {timeline.precision === "estimated" && (
-              <button
-                onClick={() => {
-                  const cues = timeline.ranges.map((r) => ({
-                    start: r.start,
-                    end: Math.min(r.end, timeline.sourceDuration),
-                  }));
-                  if (
-                    !validateCues(cues, cues.length, timeline.sourceDuration)
-                  ) {
-                    setError("当前起止时间无效，请逐句修改。");
-                    return;
-                  }
-                  pause();
-                  onTimingChange({
-                    signature: timeline.signature,
-                    cues,
-                    source: "manual",
-                  });
-                }}
-              >
+              <button onClick={applyTimingDraft}>
                 确认当前全部起止时间（请先试听校准）
               </button>
             )}
@@ -1022,6 +1058,8 @@ export default function VideoStudioPanel({
                   return;
                 pause();
                 onTimingChange(null);
+                resetTimingDraft([]);
+                setPrepared(null);
               }}
             >
               {source === "imported" ? "清除时轴并重新校准" : "恢复自动时轴"}
@@ -1029,7 +1067,12 @@ export default function VideoStudioPanel({
           </details>
           <button
             className="primary"
-            disabled={busyRef.current || recoveringDownload || !rendererReady}
+            disabled={
+              busyRef.current ||
+              recoveringDownload ||
+              !rendererReady ||
+              draftDirty
+            }
             onClick={exportMp4}
           >
             {exportFailed && !busyRef.current

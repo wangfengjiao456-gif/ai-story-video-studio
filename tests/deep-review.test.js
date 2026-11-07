@@ -237,3 +237,67 @@ test("malformed successful status responses fail in Chinese and clean up without
   );
   assert.ok(base.calls.includes("DELETE"));
 });
+
+test("manual timing drafts apply as a whole and reject empty, overlapping and out-of-audio values", async () => {
+  const { parseTimingDraft } = await import("../src/video/timingDraft.js");
+  const confirmed = [
+    { start: 0, end: 2 },
+    { start: 2, end: 4 },
+  ];
+  const draft = confirmed.map((c) => ({ ...c }));
+  draft[0].end = "2.5";
+  assert.throws(() => parseTimingDraft(draft, 2, 4), /不能重叠/);
+  assert.deepEqual(confirmed, [
+    { start: 0, end: 2 },
+    { start: 2, end: 4 },
+  ]);
+  draft[1].start = "2.5";
+  assert.deepEqual(parseTimingDraft(draft, 2, 4), [
+    { start: 0, end: 2.5 },
+    { start: 2.5, end: 4 },
+  ]);
+  draft[0].start = " ";
+  assert.throws(() => parseTimingDraft(draft, 2, 4), /不能为空/);
+  draft[0].start = "0";
+  draft[1].end = "5";
+  assert.throws(() => parseTimingDraft(draft, 2, 4), /时长内/);
+});
+
+test("invalid render proxy bodies are reported as input errors without contacting a worker", async () => {
+  const { createVideoJobHandler } = await import("../api/video-jobs.js");
+  let calls = 0;
+  const handler = createVideoJobHandler({
+    getConfig: () => ({
+      url: "https://worker.test",
+      key: "test-only-service-key",
+    }),
+    fetchImpl: async () => {
+      calls++;
+      throw Error("must not request");
+    },
+  });
+  for (const body of [null, undefined, [], 42, "{broken"]) {
+    const res = {
+      setHeader() {},
+      status(n) {
+        this.code = n;
+        return this;
+      },
+      json(value) {
+        this.body = value;
+        return this;
+      },
+    };
+    await handler(
+      {
+        method: "POST",
+        headers: { origin: "https://studio.test", host: "studio.test" },
+        body,
+      },
+      res,
+    );
+    assert.equal(res.code, 400);
+    assert.match(res.body.error.message, /JSON/);
+  }
+  assert.equal(calls, 0);
+});

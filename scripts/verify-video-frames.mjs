@@ -7,7 +7,7 @@ const dir = "work/mp4-regression",
   evidence = JSON.parse(readFileSync(`${dir}/frame-evidence.json`, "utf8"));
 const byIndex = new Map(evidence.map((s) => [s.index, s]));
 const probes = [{ frame: 0, index: 0, label: "first-start" }];
-for (const index of [0, 4, 9]) {
+for (const index of [0, 1, 4, 9]) {
   const c = byIndex.get(index);
   assert.ok(c.english && c.chinese, "bilingual evidence must be non-empty");
   probes.push({
@@ -120,5 +120,5 @@ writeFileSync(
   JSON.stringify({ result: "PASS", checks: results }, null, 2),
 );
 console.log(
-  `Actual MP4 frame/subtitle verification PASS: ${results.length} probes at first/middle/last scenes, including before/at transitions.`,
+  `Actual MP4 frame/subtitle verification PASS: ${results.length} probes at first/second/middle/last scenes, including before/at transitions.`,
 );

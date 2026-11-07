@@ -207,7 +207,8 @@ export default function App() {
     if (
       p === lastSavedProject &&
       !videoPlayback.rendering &&
-      !videoPlayback.pendingDownload
+      !videoPlayback.pendingDownload &&
+      !videoPlayback.timingDraftDirty
     )
       return;
     const warn = (e) => {
@@ -221,6 +222,7 @@ export default function App() {
     lastSavedProject,
     videoPlayback.rendering,
     videoPlayback.pendingDownload,
+    videoPlayback.timingDraftDirty,
   ]);
   function exportProject() {
     try {

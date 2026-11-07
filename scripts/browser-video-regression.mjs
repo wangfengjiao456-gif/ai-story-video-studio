@@ -49,6 +49,32 @@ await page.addInitScript((project) => {
 const { createVideoJobHandler } = await import("../api/video-jobs.js");
 const { createRendererStatus } = await import("../api/renderer-status.js");
 const { createAlignmentHandler } = await import("../api/align-audio.js");
+const { createHandler: createSpeechHandler } = await import(
+  "../api/elevenlabs.js"
+);
+let speechRequests = 0;
+await page.route("**/api/elevenlabs", (route) =>
+  routeHandler(
+    route,
+    createSpeechHandler({
+      getKey: () => "offline-speech-mock",
+      fetchImpl: async (url, options) => {
+        assert.ok(url.includes("NDTYOmYEjbDIVCKB35i3/with-timestamps"));
+        const input = JSON.parse(options.body);
+        assert.equal(input.model_id, "eleven_v3");
+        assert.equal(input.voice_settings.speed, 0.9);
+        assert.equal(input.language_code, "en");
+        speechRequests++;
+        return Response.json({
+          audio_base64: readFileSync(
+            "work/mp4-regression/uploaded-test.mp3",
+          ).toString("base64"),
+          alignment: null,
+        });
+      },
+    }),
+  ),
+);
 const getConfig = () => ({
   url: rendererBase,
   key: "offline-browser-key-0123456789",
@@ -73,7 +99,11 @@ async function routeHandler(route, handler) {
   await handler(
     {
       method: route.request().method(),
-      headers: { origin: studioURL, host: new URL(studioURL).host },
+      headers: {
+        origin: studioURL,
+        host: new URL(studioURL).host,
+        "content-type": "application/json",
+      },
       body: route.request().postDataJSON(),
     },
     res,
@@ -192,6 +222,69 @@ assert.equal(
   p.scenes[0].imageRef.dataUrl,
 );
 
+// Exercise the remaining editing modules without contacting paid services.
+await page.getByRole("button", { name: "角色与画风", exact: true }).click();
+await page.getByLabel(/人物名称/).fill("回归人物");
+await page.getByLabel(/外貌特征/).fill("短发，温柔的表情");
+await page.getByLabel(/固定服装/).fill("深绿色外套");
+await page
+  .locator('input[type=file][accept="image/png,image/jpeg,image/webp"]')
+  .setInputFiles({
+    name: "character.png",
+    mimeType: "image/png",
+    buffer: Buffer.from(p.scenes[0].imageRef.dataUrl.split(",")[1], "base64"),
+  });
+await page.getByAltText("人物标准形象参考图").waitFor();
+await page.getByRole("button", { name: "保存角色与项目", exact: true }).click();
+assert.equal(
+  await page.evaluate(
+    () => JSON.parse(localStorage.getItem("story-studio-v1")).character.name,
+  ),
+  "回归人物",
+);
+await page.getByRole("button", { name: "配音与字幕", exact: true }).click();
+await page.getByRole("button", { name: /模板 B · 渐变字幕遮罩/ }).click();
+await page.getByRole("button", { name: /模板 A · 独立字幕区/ }).click();
+await page.getByRole("button", { name: "AI 配音", exact: true }).click();
+await page.getByText("NDTYOmYEjbDIVCKB35i3", { exact: true }).waitFor();
+const aiCards = page.locator(".ai-clip");
+await aiCards
+  .first()
+  .getByRole("button", { name: "生成英文配音", exact: true })
+  .click();
+await aiCards
+  .first()
+  .getByRole("button", { name: "下载 MP3", exact: true })
+  .waitFor();
+await aiCards
+  .first()
+  .getByRole("button", { name: "试听", exact: true })
+  .click();
+await page.waitForFunction(
+  () => document.querySelector(".ai-player audio")?.currentTime > 0.1,
+);
+await page
+  .locator(".ai-player")
+  .getByRole("button", { name: "暂停", exact: true })
+  .click();
+const generatedDownload = page.waitForEvent("download");
+await aiCards
+  .first()
+  .getByRole("button", { name: "下载 MP3", exact: true })
+  .click();
+await (
+  await generatedDownload
+).saveAs("work/mp4-regression/mock-generated-voice.mp3");
+await aiCards
+  .nth(1)
+  .getByRole("button", { name: "生成英文配音", exact: true })
+  .click();
+await aiCards
+  .nth(1)
+  .getByRole("button", { name: "下载 MP3", exact: true })
+  .waitFor();
+assert.equal(speechRequests, 2); // Actual server handler, mocked upstream; no paid generation.
+
 await page.getByRole("button", { name: "视频预览与导出", exact: true }).click();
 await page
   .locator('input[type=file][accept="audio/mpeg,.mp3"]')
@@ -283,6 +376,45 @@ assert.equal(
   true,
 );
 await page.getByRole("button", { name: "视频预览与导出", exact: true }).click();
+// Atomic timing edits: failed drafts must not change confirmed project data or enable export.
+const timingPanel = page.locator("details").filter({
+  has: page.getByText("手动微调字幕切镜时间（秒）", { exact: true }),
+});
+await timingPanel.locator("summary").click();
+const timingInputs = timingPanel.locator("input[type=number]");
+await timingInputs.nth(1).fill(String(knownCues[0].end + 0.05));
+await timingPanel
+  .getByRole("button", { name: "应用起止时间", exact: true })
+  .click();
+await page.getByRole("alert").filter({ hasText: "不能重叠" }).waitFor();
+await page.getByRole("button", { name: "保存项目", exact: true }).click();
+assert.equal(
+  await page.evaluate(
+    () =>
+      JSON.parse(localStorage.getItem("story-studio-v1")).videoTiming.cues[0]
+        .end,
+  ),
+  knownCues[0].end,
+);
+await timingInputs.nth(2).fill(String(knownCues[1].start + 0.05));
+await timingPanel
+  .getByRole("button", { name: "应用起止时间", exact: true })
+  .click();
+await timingInputs.nth(1).fill(String(knownCues[0].end));
+await timingInputs.nth(2).fill(String(knownCues[1].start));
+await timingPanel
+  .getByRole("button", { name: "应用起止时间", exact: true })
+  .click();
+await timingInputs.nth(0).fill("");
+await timingPanel
+  .getByRole("button", { name: "应用起止时间", exact: true })
+  .click();
+await page.getByRole("alert").filter({ hasText: "不能为空" }).waitFor();
+await page.getByRole("button", { name: "放弃时间修改", exact: true }).click();
+assert.equal(
+  await timingInputs.nth(0).inputValue(),
+  String(knownCues[0].start),
+);
 // The right preview uses the same plan/page and seeks the actual MP3.
 for (const i of [8, 1, 9, 0]) {
   await page
@@ -341,7 +473,7 @@ await page.getByText("MP3 真实时长：", { exact: false }).waitFor();
 await page.getByRole("button", { name: "准备完整视频", exact: true }).click();
 await page.locator(".full-video-frame canvas").waitFor();
 const frameEvidence = [];
-for (const index of [0, 3, 4, 8, 9]) {
+for (const index of [0, 1, 3, 4, 8, 9]) {
   await slider.evaluate(
     (e, time) => {
       Object.getOwnPropertyDescriptor(

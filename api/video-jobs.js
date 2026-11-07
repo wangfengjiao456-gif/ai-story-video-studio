@@ -31,9 +31,15 @@ export function createVideoJobHandler({
         !["localhost", "127.0.0.1"].includes(base.hostname)
       )
         return fail(503, "渲染服务必须使用 HTTPS。");
-      const body =
-        typeof req.body === "string" ? JSON.parse(req.body) : req.body;
-      if (JSON.stringify(body).length > 100000)
+      let body;
+      try {
+        body = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
+      } catch {
+        return fail(400, "视频任务 JSON 无法解析，项目未修改。");
+      }
+      if (!body || typeof body !== "object" || Array.isArray(body))
+        return fail(400, "视频任务必须是 JSON 对象，项目未修改。");
+      if (Buffer.byteLength(JSON.stringify(body)) > 100000)
         return fail(400, "视频任务过大，请减少字幕分页。");
       const response = await fetchImpl(new URL("/jobs", base), {
         method: "POST",
@@ -57,14 +63,12 @@ export function createVideoJobHandler({
         typeof result.token !== "string"
       )
         return fail(502, "渲染服务响应异常。");
-      return res
-        .status(200)
-        .json({
-          jobId: result.jobId,
-          token: result.token,
-          baseUrl: base.origin,
-          expiresAt: result.expiresAt,
-        });
+      return res.status(200).json({
+        jobId: result.jobId,
+        token: result.token,
+        baseUrl: base.origin,
+        expiresAt: result.expiresAt,
+      });
     } catch {
       return fail(
         502,

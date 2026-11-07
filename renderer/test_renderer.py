@@ -68,6 +68,16 @@ class RendererTests(unittest.TestCase):
             self.assertTrue((root/ids[1]).exists());self.assertTrue((root/'unrelated').exists())
             for i in [0,2,3]:self.assertFalse((root/ids[i]).exists())
 
+    def test_failed_task_metadata_is_bounded_and_active_tasks_survive(self):
+        import server
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)
+            jobs={f'{i:032x}':{'state':'error','cancelled':False,'expiresAt':time.time()+1000,'finishedAt':i} for i in range(30)}
+            active='f'*32;jobs[active]={'state':'rendering','expiresAt':0,'cancelled':False}
+            with patch.object(server,'ROOT',root),patch.object(server,'JOBS',jobs):server.cleanup()
+            self.assertEqual(len(jobs),11);self.assertIn(active,jobs)
+            self.assertIn(f'{29:032x}',jobs);self.assertNotIn(f'{0:032x}',jobs)
+
     def test_cancelled_result_cannot_become_complete(self):
         import server
         with tempfile.TemporaryDirectory() as tmp:
@@ -101,6 +111,8 @@ class RendererTests(unittest.TestCase):
                     except (OSError,urllib.error.URLError):time.sleep(.05)
                 with self.assertRaises(urllib.error.HTTPError) as denied:request('/jobs','POST',json.dumps(manifest).encode(),{'Content-Type':'application/json'})
                 self.assertEqual(denied.exception.code,401)
+                with self.assertRaises(urllib.error.HTTPError) as malformed:request('/check','POST',b'null',{'Content-Type':'application/json','Authorization':'Bearer '+env['RENDERER_API_KEY']})
+                self.assertEqual(malformed.exception.code,400)
                 for origin,expected in [('https://other.test',403),('https://studio.test',200)]:
                     try:
                         checked=request('/check','POST',json.dumps({'origin':origin}).encode(),{'Content-Type':'application/json','Authorization':'Bearer '+env['RENDERER_API_KEY']})

@@ -59,6 +59,7 @@ PORT=8000
 
 ```sh
 npm ci
+npm run lint
 npm test
 npm run test:renderer
 npm run build
@@ -106,8 +107,14 @@ STUDIO_URL=https://your-preview.vercel.app npm run verify:preview
 
 非技术用户请先阅读 [IPAD_GUIDE.md](IPAD_GUIDE.md)：从旧网址备份、Render/Vercel 的具体点击位置、密钥本人复制、免费手动校准、第一次真实导出及 Safari「存储到文件」均逐步说明。Preview 与 Production、不同 Preview 来源的本地存档不共享，不要在迁移前清除旧网址数据。
 
-本轮新增的验收不仅核对编码：会从实际下载 MP4 解码首镜、中镜、末镜和切换前后一帧，与浏览器绘制的对应插画/中英字幕证据比较。报告为 `work/mp4-regression/frame-verification.json`，随 CI artifact 上传。它不执行 OCR，也不把模拟 Forced Alignment 当作真实模型验收。
+本轮新增的验收不仅核对编码：会从实际下载 MP4 解码首镜、第二镜、中镜、末镜和切换前后一帧，与浏览器绘制的对应插画/中英字幕证据比较。报告为 `work/mp4-regression/frame-verification.json`，随 CI artifact 上传。它不执行 OCR，也不把模拟 Forced Alignment 当作真实模型验收。
 
 非默认 `aiSpeed` 现在随项目 JSON/浏览器存档保存，旧项目缺失时仍默认 0.8。切换功能页、网页进入后台或 pagehide 会暂停预览；回到页面同步当前位置，不自动续播或重新生成音频。Safari 可能忽略离页提醒，仍须主动保存/导出备份。
 
 只读进度/下载检查遇到临时网络、超时、408/429/5xx 时最多补试两次；创建/开始任务及付费调用均不自动重提。编码完成而下载检查失败时保留文件，提供单独恢复检查；结果过期明确标注。此恢复仅限当前页面会话，不承诺刷新后恢复正在上传或尚未下载的任务。
+
+## 最终审计与放行条件
+
+完整模块核对、测试证据边界和待用户事项见 [RELEASE_AUDIT.md](RELEASE_AUDIT.md)。状态为“等待用户授权和真实验收”。本轮新增原子时间草稿：应用前不能导出，错误不会覆盖已确认时轴；微调后须应用并再次保存。worker 最多额外保留十条失败记录，不影响正在运行的任务。
+
+请保持 Preview 的 Deployment Protection，仅向可信使用者授权；同源请求校验不等于登录/付费额度控制。不要为方便验收将付费 API 公开到无保护网站。Production 放行仍需实际 Render/Vercel 连接及实体 iPad 验收。

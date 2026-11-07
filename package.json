@@ -10,7 +10,8 @@
     "test": "node --test tests/*.test.js",
     "test:e2e": "node scripts/run-video-e2e.mjs",
     "test:renderer": "python3 renderer/test_renderer.py",
-    "verify:preview": "node scripts/verify-deployment.mjs"
+    "verify:preview": "node scripts/verify-deployment.mjs",
+    "lint": "eslint src api scripts tests eslint.config.js"
   },
   "dependencies": {
     "lucide-react": "^0.468.0",
@@ -21,8 +22,13 @@
   "devDependencies": {
     "@napi-rs/canvas": "^1.1.0",
     "esbuild": "^0.28.2",
+    "eslint": "^10.14.0",
+    "globals": "^17.14.0",
     "playwright": "^1.56.1",
     "react-test-renderer": "^19.3.1",
     "vite": "^7.2.2"
+  },
+  "overrides": {
+    "minimatch": "^11.0.1"
   }
 }

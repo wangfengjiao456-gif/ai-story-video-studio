@@ -25,7 +25,8 @@ export default function useVoiceStudio(
     sequence = useRef(null),
     selectedRef = useRef(null),
     speedRef = useRef(speed),
-    raf = useRef(null);
+    raf = useRef(null),
+    playEpoch = useRef(0);
   projectRef.current = project;
   callbacks.current = { onStart, onFrame, onSpeedChange };
   speedRef.current = speed;
@@ -43,6 +44,7 @@ export default function useVoiceStudio(
       ? p.english
       : (p.scenes.find((s) => s.id === key)?.english ?? "");
   function pause() {
+    playEpoch.current++;
     audioRef.current?.pause();
     setPlaying(false);
   }
@@ -160,9 +162,16 @@ export default function useVoiceStudio(
       audio.load();
     }
     if (changed || restart || audio.ended) audio.currentTime = 0;
+    const epoch = ++playEpoch.current;
     try {
       await audio.play();
     } catch {
+      if (
+        epoch !== playEpoch.current ||
+        selectedRef.current !== key ||
+        audio.getAttribute("src") !== a.url
+      )
+        return;
       setPlaying(false);
       setError("无法播放音频，请再次点击播放，或下载 MP3 后试听。");
     }
@@ -187,9 +196,16 @@ export default function useVoiceStudio(
       audio = audioRef.current;
     if (!a || !audio || audio.getAttribute("src") !== a.url) return;
     if (!Number.isFinite(audio.duration) || audio.duration <= 0) {
+      // Switching sources normally emits durationchange before metadata is ready.
+      if (audio.readyState === 0) return;
       setError("无法读取真实音频时长，暂不能同步预览。可下载 MP3 检查。");
       return;
     }
+    setError((previous) =>
+      previous === "无法读取真实音频时长，暂不能同步预览。可下载 MP3 检查。"
+        ? ""
+        : previous,
+    );
     const next = {
       ...assetsRef.current,
       [key]: { ...a, duration: audio.duration },

@@ -4,18 +4,21 @@ from pathlib import Path
 from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
 from urllib.parse import urlparse,parse_qs
 from render import validate_manifest,render
-import subprocess
 ROOT=Path(os.environ.get('RENDERER_DATA_DIR','/tmp/story-renderer'));ROOT.mkdir(parents=True,exist_ok=True)
 KEY=os.environ.get('RENDERER_API_KEY','');ORIGINS=set(x.strip() for x in os.environ.get('ALLOWED_ORIGINS','').split(',') if x.strip())
 JOBS={};LOCK=threading.RLock();SLOT=threading.Semaphore(1);TTL=3600;MAX_JOB_BYTES=200*1024*1024
 UPLOADS=threading.BoundedSemaphore(2)
 RENDER_TIMEOUT=900
+MAX_ERROR_HISTORY=10
 
 def cleanup(orphaned=False):
     with LOCK:
         for id,job in list(JOBS.items()):
             if job['state'] not in ['rendering','queued'] and not job.get('process') and (job['expiresAt']<time.time() or job['cancelled']):
                 shutil.rmtree(ROOT/id,ignore_errors=True);del JOBS[id]
+        errors=sorted(((id,j) for id,j in JOBS.items() if j['state']=='error' and not j.get('process')),key=lambda item:item[1].get('finishedAt',item[1]['expiresAt']-TTL))
+        for id,_ in errors[:-MAX_ERROR_HISTORY]:
+            shutil.rmtree(ROOT/id,ignore_errors=True);JOBS.pop(id,None)
         if orphaned:
             for path in ROOT.iterdir():
                 if re.fullmatch(r'[a-f0-9]{32}',path.name) and path.name not in JOBS:shutil.rmtree(path,ignore_errors=True)
@@ -38,7 +41,7 @@ def run(id):
             if j['cancelled']:raise ValueError('导出已取消。')
             j.update(state='complete',result=result)
     except Exception as err:
-        with LOCK:j.update(state='error',error=str(err) if isinstance(err,ValueError) else '渲染服务内部错误，请重新导出。')
+        with LOCK:j.update(state='error',finishedAt=time.time(),error=str(err) if isinstance(err,ValueError) else '渲染服务内部错误，请重新导出。')
     finally:
         if j['state']!='complete':shutil.rmtree(ROOT/id,ignore_errors=True)
         SLOT.release()
@@ -80,6 +83,7 @@ class Handler(BaseHTTPRequestHandler):
             if self.path=='/check':
                 if not KEY or not hmac.compare_digest(self.headers.get('Authorization',''),f'Bearer {KEY}'):return self.json(401,{'error':'渲染服务密钥不匹配。'})
                 body=json.loads(self.body(1000))
+                if not isinstance(body,dict):return self.json(400,{'error':'连接检查需要 JSON 对象。'})
                 if body.get('origin') not in ORIGINS:return self.json(403,{'error':'请在渲染服务 ALLOWED_ORIGINS 添加当前 Preview 的完整 HTTPS 域名。'})
                 if not health():return self.json(503,{'error':'FFmpeg/ffprobe 未安装或临时磁盘空间不足。'})
                 return self.json(200,{'ok':True})
@@ -168,7 +172,7 @@ class Handler(BaseHTTPRequestHandler):
             if j['process']:
                 try:j['process'].kill()
                 except ProcessLookupError:pass
-            j['state']='error';j['error']='导出已取消。'
+            j['state']='error';j['finishedAt']=time.time();j['error']='导出已取消。'
         if not j.get('process'):shutil.rmtree(ROOT/id,ignore_errors=True)
         return self.json(200,{'ok':True})
 
