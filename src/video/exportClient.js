@@ -179,6 +179,8 @@ export async function renderVideo(
     for (;;) {
       checkAbort(combined);
       const state = await request(base, { headers });
+      if (!state || typeof state !== "object" || Array.isArray(state))
+        throw Error("渲染服务返回无效任务状态，请检查服务版本后重试。");
       if (state.state === "error")
         throw Error(state.error || "MP4 合成失败，请重试。");
       if (state.state === "complete") {

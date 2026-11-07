@@ -224,3 +224,16 @@ test("project image preflight rejects undecodable images and stops superseded im
     /cannot decode/,
   );
 });
+
+test("malformed successful status responses fail in Chinese and clean up without claiming completion", async () => {
+  const base = worker();
+  const fetchImpl = async (url, o = {}) =>
+    o.method === "GET" || !o.method
+      ? Response.json(null)
+      : base.fetchImpl(url, o);
+  await assert.rejects(
+    renderVideo(timeline, async () => new Blob(), { fetchImpl }),
+    /无效任务状态/,
+  );
+  assert.ok(base.calls.includes("DELETE"));
+});
