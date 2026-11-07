@@ -12,6 +12,7 @@ import {
 } from "../presentation/layout.js";
 export default function StoryFrame({
   project,
+  overrideFrame,
   scene,
   index,
   audioRef,
@@ -90,7 +91,7 @@ export default function StoryFrame({
     decoded = useRef(null),
     [ready, setReady] = useState(null),
     [renderError, setRenderError] = useState("");
-  const plan = useMemo(
+  const basePlan = useMemo(
     () => framePlan(project, scene, measure),
     [
       project.ratio,
@@ -102,15 +103,18 @@ export default function StoryFrame({
       measure,
     ],
   );
-  const renderVersion = useMemo(() => ({}), [plan, page]);
+  const plan = overrideFrame?.plan || basePlan,
+    activePage = overrideFrame?.page ?? page,
+    activeScene = plan.scene;
+  const renderVersion = useMemo(() => ({}), [plan, activePage]);
   useEffect(() => {
     let cancelled = false;
     setRenderError("");
     async function paint() {
       try {
         let image = null;
-        if (scene?.imageRef) {
-          const src = scene.imageRef.dataUrl;
+        if (activeScene?.imageRef) {
+          const src = activeScene.imageRef.dataUrl;
           if (decoded.current?.src === src) image = decoded.current.image;
           else {
             image = new Image();
@@ -126,7 +130,7 @@ export default function StoryFrame({
         if (cancelled) return;
         const ctx = canvasRef.current?.getContext("2d");
         if (!ctx) throw Error("当前浏览器不支持画面渲染。");
-        paintFrame(ctx, plan, page, image);
+        paintFrame(ctx, plan, activePage, image);
         setReady(renderVersion);
       } catch (err) {
         if (!cancelled) setRenderError(err.message);
@@ -152,19 +156,19 @@ export default function StoryFrame({
       setTimeout(() => URL.revokeObjectURL(url), 10000);
     }, "image/png");
   }
-  const immersive=p.videoTemplate==='immersive';
+  const immersive = p.videoTemplate === "immersive";
   return (
     <>
       <div
         ref={host}
         className="v3-frame-shell"
-        style={{ aspectRatio: `1080 / ${geometry.height}` }}
+        style={{ aspectRatio: `${plan.outputWidth} / ${plan.outputHeight}` }}
         aria-label={`模板 ${immersive ? "B" : "A"} 视频预览`}
       >
         <canvas
           ref={canvasRef}
           className="v31-frame-canvas"
-          style={{visibility:ready===renderVersion?'visible':'hidden'}}
+          style={{ visibility: ready === renderVersion ? "visible" : "hidden" }}
           width={plan.outputWidth}
           height={plan.outputHeight}
           aria-label="当前分镜画面与字幕"
@@ -190,10 +194,14 @@ export default function StoryFrame({
         导出当前字幕页 PNG
       </button>
       <div className="frame-legend">
-        {scene?.imageRef ? (scene.imageRef.kind==='generated'?'OpenAI 生成配图':'本分镜上传图片') : "演示占位画面 · 非 AI 生成"}
+        {scene?.imageRef
+          ? scene.imageRef.kind === "generated"
+            ? "OpenAI 生成配图"
+            : "本分镜上传图片"
+          : "演示占位画面 · 非 AI 生成"}
         {p.ratio === "16:9" ? " · 横屏教学" : ""}
       </div>
-      {layout.pages.length > 1 && (
+      {!overrideFrame && layout.pages.length > 1 && (
         <div className="subtitle-pages">
           <button
             aria-label="上一字幕页"

@@ -89,7 +89,11 @@ test("生成失败不覆盖原图、不自动重试", async () => {
 test("生成期间修改英文时保留未应用结果，禁止迟到响应覆盖新内容", async () => {
   const p = project();
   let resolve;
-  globalThis.fetch = () => new Promise((r) => (resolve = r));
+  let calls = 0;
+  globalThis.fetch = () => {
+    calls++;
+    return new Promise((r) => (resolve = r));
+  };
   const h = await mount(p);
   let pending;
   try {
@@ -109,6 +113,11 @@ test("生成期间修改英文时保留未应用结果，禁止迟到响应覆�
     });
     assert.equal(h.applied.length, 0);
     assert.equal(h.api.pending.id, p.scenes[0].id);
+    const retained = h.api.pending;
+    await act(async () => h.api.generate(p.scenes[1].id));
+    assert.equal(calls, 1);
+    assert.equal(h.api.pending, retained);
+    assert.match(h.api.error, /原结果已保留/);
     await act(async () => h.api.applyPending());
     assert.equal(h.applied.length, 1);
   } finally {

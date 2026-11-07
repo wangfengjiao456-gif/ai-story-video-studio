@@ -26,6 +26,7 @@ export function createAlignmentHandler({
       const b = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
       if (
         !b ||
+        b.confirmed !== true ||
         typeof b.text !== "string" ||
         !b.text.trim() ||
         b.text.length > 100000 ||
@@ -53,29 +54,55 @@ export function createAlignmentHandler({
           signal: AbortSignal.timeout(105000),
         },
       );
-      if (!response.ok)
+      if (!response.ok) {
+        let code;
+        try {
+          code = (await response.json())?.detail?.status;
+        } catch {}
+        if (
+          code === "quota_exceeded" ||
+          code === "insufficient_credits" ||
+          response.status === 402
+        )
+          return fail(402, "ElevenLabs 对齐额度不足，请检查账户额度后重试。");
+        if (response.status === 401)
+          return fail(401, "ElevenLabs API Key 无效。");
+        if (response.status === 403) return fail(403, "密钥缺少音频对齐权限。");
+        if (response.status === 429)
+          return fail(429, "音频对齐请求过于频繁或并发已满，请稍后重试。");
+        if (response.status === 400 || response.status === 422)
+          return fail(
+            422,
+            "音频或英文无法对齐，请检查 MP3 是否损坏、是否与分镜英文一致；可手动校准。",
+          );
         return fail(
-          response.status === 401 ? 401 : 502,
-          response.status === 401
-            ? "ElevenLabs API Key 无效。"
-            : response.status === 403
-              ? "密钥缺少音频对齐权限。"
-              : response.status === 402 || response.status === 429
-                ? "对齐额度不足或请求过于频繁，请检查账户后重试。"
-                : "ElevenLabs 音频对齐失败，请检查 MP3、文本及账户额度。",
+          502,
+          "ElevenLabs 音频对齐服务异常，请稍后重试，原时间轴未修改。",
         );
+      }
       const data = await response.json();
-      if (!Array.isArray(data.words) || data.words.length > 50000)
+      if (
+        !Array.isArray(data.words) ||
+        !data.words.length ||
+        data.words.length > 50000 ||
+        data.words.some(
+          (w) =>
+            !w ||
+            typeof w.text !== "string" ||
+            !Number.isFinite(w.start) ||
+            !Number.isFinite(w.end) ||
+            w.start < 0 ||
+            w.end < w.start,
+        )
+      )
         return fail(502, "对齐服务未返回有效时间戳。");
-      return res
-        .status(200)
-        .json({
-          words: data.words.map((w) => ({
-            text: w.text,
-            start: w.start,
-            end: w.end,
-          })),
-        });
+      return res.status(200).json({
+        words: data.words.map((w) => ({
+          text: w.text,
+          start: w.start,
+          end: w.end,
+        })),
+      });
     } catch {
       return fail(502, "音频对齐网络请求失败或超时，未修改原时间轴。");
     }

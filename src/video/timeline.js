@@ -12,13 +12,18 @@ export function timingSignature(project, assets, speed, mode) {
     project.english,
     project.scenes.map((s) => s.english),
     speed,
-    audio.map((a) => [
-      a?.text,
-      a?.duration,
-      a?.blob?.size,
-      a?.alignment,
-      a?.fingerprint,
-    ]),
+    audio.map((a) => {
+      // Preserve the V3.1 external-MP3 signature shape for already saved projects.
+      const values = [
+        a?.text,
+        a?.duration,
+        a?.blob?.size,
+        a?.alignment,
+        a?.fingerprint,
+      ];
+      if (a?.normalizedAlignment) values.push(a.normalizedAlignment);
+      return values;
+    }),
   ]);
   let h = 2166136261;
   for (let i = 0; i < raw.length; i++) {
@@ -200,7 +205,7 @@ export function buildVideoTimeline(
         : precision,
     reason,
     manualStale: !!project.videoTiming && !manual && !savedCues,
-    duration: Math.ceil(duration * FPS) / FPS,
+    duration,
     sourceDuration: duration,
     ranges,
     frames,
@@ -217,7 +222,9 @@ export function buildVideoTimeline(
 }
 export function frameAt(timeline, time) {
   return (
-    timeline.frames.find((f) => time >= f.start && time < f.end) ||
+    (time <= 0
+      ? timeline.frames[0]
+      : timeline.frames.find((f) => time >= f.start && time < f.end)) ||
     timeline.frames.at(-1)
   );
 }

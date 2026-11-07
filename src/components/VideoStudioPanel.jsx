@@ -1,3 +1,7 @@
+import {
+  audioFingerprint,
+  assertPreparedAudio,
+} from "../video/audioIdentity.js";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { buildVideoTimeline, frameAt, audioAt } from "../video/timeline.js";
 import {
@@ -18,6 +22,9 @@ export default function VideoStudioPanel({
   onFrame,
   hidden,
   pauseRef,
+  transportRef,
+  onPlaybackChange,
+  onPreviewFrame,
 }) {
   const [rendererReady, setRendererReady] = useState(false),
     [checkingRenderer, setCheckingRenderer] = useState(false);
@@ -33,8 +40,11 @@ export default function VideoStudioPanel({
     [time, setTime] = useState(0),
     [playing, setPlaying] = useState(false),
     [progress, setProgress] = useState(null),
-    [result, setResult] = useState(null);
+    [result, setResult] = useState(null),
+    [exportFailed, setExportFailed] = useState(false);
   const audio = useRef(null),
+    inspector = useRef(null),
+    startingInspector = useRef(false),
     canvas = useRef(null),
     cursor = useRef(0),
     controller = useRef(null),
@@ -44,7 +54,16 @@ export default function VideoStudioPanel({
     exportImage = useRef(null),
     timelineRef = useRef(null),
     busyRef = useRef(false),
-    alignmentContext = useRef(null);
+    alignmentContext = useRef(null),
+    importEpoch = useRef(0),
+    importController = useRef(null),
+    inputContext = useRef(null),
+    pendingSeek = useRef(null);
+  inputContext.current = JSON.stringify([
+    project.english,
+    project.scenes.map((s) => s.english),
+    ai.speed,
+  ]);
   alignmentContext.current = JSON.stringify([
     imported?.fingerprint,
     project.scenes.map((s) => s.english),
@@ -66,6 +85,7 @@ export default function VideoStudioPanel({
   }, []);
   const { timeline, timingError } = useMemo(() => {
     try {
+      assertPreparedAudio(prepared, ai.assets, ai.speed, source === "imported");
       return {
         timeline: prepared
           ? buildVideoTimeline(
@@ -81,7 +101,7 @@ export default function VideoStudioPanel({
     } catch (err) {
       return { timeline: null, timingError: err.message };
     }
-  }, [project, prepared, measure]);
+  }, [project, prepared, measure, ai.assets, ai.speed, source]);
   const loadImage = useMemo(() => {
     const cache = new Map();
     return (src) => {
@@ -105,6 +125,7 @@ export default function VideoStudioPanel({
   const frame = timeline ? frameAt(timeline, time) : null;
   const pause = () => {
     audio.current?.pause();
+    if (!startingInspector.current) inspector.current?.pause();
     setPlaying(false);
   };
   useEffect(() => {
@@ -118,8 +139,17 @@ export default function VideoStudioPanel({
   }, [timingError, !!timeline]);
   useEffect(
     () => () => {
+      audio.current?.pause();
+      inspector.current?.pause();
       controller.current?.abort();
       alignmentContext.current = null;
+      importEpoch.current++;
+      importController.current?.abort();
+      if (pendingSeek.current)
+        audio.current?.removeEventListener(
+          "loadedmetadata",
+          pendingSeek.current,
+        );
       if (busyRef.current) cancelRender(job.current);
       if (importedUrl.current) URL.revokeObjectURL(importedUrl.current);
     },
@@ -132,11 +162,14 @@ export default function VideoStudioPanel({
     project.english,
     project.scenes.map((s) => s.english).join("\n"),
     source,
+    ai.speed,
   ]);
   useEffect(() => {
     if (!frame || !canvas.current) return;
     let cancelled = false;
     const ctx = canvas.current.getContext("2d");
+    ctx.clearRect(0, 0, 1080, 1920);
+    onFrame?.(frame.sceneIndex);
     async function draw() {
       try {
         const image = await loadImage(frame.plan.scene.imageRef.dataUrl);
@@ -144,7 +177,6 @@ export default function VideoStudioPanel({
         if (next) loadImage(next).catch(() => {});
         if (cancelled) return;
         paintFrame(ctx, frame.plan, frame.page, image);
-        onFrame?.(frame.sceneIndex);
       } catch (err) {
         if (!cancelled) setError(err.message);
       }
@@ -178,6 +210,32 @@ export default function VideoStudioPanel({
     id = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(id);
   }, [playing]);
+  useEffect(() => {
+    onPreviewFrame?.(frame);
+  }, [frame, onPreviewFrame]);
+  useEffect(() => {
+    onPlaybackChange?.({ ready: !!timeline, playing });
+  }, [!!timeline, playing, onPlaybackChange]);
+  useEffect(() => {
+    if (!transportRef) return;
+    transportRef.current = {
+      seekScene(index) {
+        const range = timelineRef.current?.ranges[index];
+        if (range) {
+          pause();
+          seek(range.start, false);
+        }
+      },
+      toggle() {
+        if (playing) pause();
+        else if (timelineRef.current)
+          seek(time >= timelineRef.current.duration ? 0 : time, true);
+      },
+    };
+    return () => {
+      transportRef.current = null;
+    };
+  });
   function saveCues(cues, source = "manual") {
     if (
       !imported ||
@@ -191,6 +249,7 @@ export default function VideoStudioPanel({
     pause();
     onTimingChange({ signature, cues, source });
     setPrepared({ assets, speed: ai.speed, source: "article" });
+    cursor.current = 0;
     setTime(0);
     setError("");
   }
@@ -217,7 +276,11 @@ export default function VideoStudioPanel({
       const response = await fetch("/api/align-audio", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ audio: encoded, text: transcript }),
+        body: JSON.stringify({
+          audio: encoded,
+          text: transcript,
+          confirmed: true,
+        }),
       });
       const data = await response.json();
       if (!response.ok) throw Error(data.error?.message || "音频对齐失败。");
@@ -240,7 +303,6 @@ export default function VideoStudioPanel({
     pause();
     setPreparing(true);
     setError("");
-    setResult(null);
     try {
       const assets = { ...ai.assets };
       if (source === "imported") {
@@ -271,13 +333,22 @@ export default function VideoStudioPanel({
     const file = e.target.files[0];
     e.target.value = "";
     if (!file) return;
+    pause();
+    const epoch = ++importEpoch.current,
+      context = inputContext.current;
+    importController.current?.abort();
+    const importRequest = new AbortController();
+    importController.current = importRequest;
+    let url;
     try {
       if (
         file.size > 50 * 1024 * 1024 ||
         !file.name.toLowerCase().endsWith(".mp3")
       )
         throw Error("请导入 50 MB 内的 MP3 文件。");
-      const url = URL.createObjectURL(file);
+      const fingerprint = await audioFingerprint(file);
+      if (epoch !== importEpoch.current) return;
+      url = URL.createObjectURL(file);
       const asset = {
         blob: file,
         url,
@@ -285,21 +356,30 @@ export default function VideoStudioPanel({
         speed: ai.speed,
         duration: null,
         external: true,
-        fingerprint: Array.from(
-          new Uint8Array(
-            await crypto.subtle.digest("SHA-256", await file.arrayBuffer()),
-          ),
-          (x) => x.toString(16).padStart(2, "0"),
-        ).join(""),
+        fingerprint,
       };
       try {
-        asset.duration = await audioDuration(asset);
+        asset.duration = await audioDuration(asset, {
+          signal: importRequest.signal,
+        });
         if (asset.duration > 600)
           throw Error("当前 MP4 流程最多支持 10 分钟 MP3。");
       } catch (err) {
         URL.revokeObjectURL(url);
         throw err;
       }
+      if (epoch !== importEpoch.current) {
+        URL.revokeObjectURL(url);
+        return;
+      }
+      if (context !== inputContext.current) {
+        URL.revokeObjectURL(url);
+        setError("读取期间英文或语速已变化，MP3 未替换，请重新导入。");
+        return;
+      }
+      audio.current?.removeAttribute("src");
+      audio.current?.load();
+      setTime(0);
       if (importedUrl.current) URL.revokeObjectURL(importedUrl.current);
       importedUrl.current = url;
       setImported(asset);
@@ -320,7 +400,12 @@ export default function VideoStudioPanel({
         "已导入 MP3。请先逐句音频对齐，或填写全部分镜起止时间；不会自动猜测切换时间。",
       );
     } catch (err) {
-      setError(err.message);
+      if (url && url !== importedUrl.current) URL.revokeObjectURL(url);
+      if (epoch === importEpoch.current && err.name !== "AbortError")
+        setError(err.message);
+    } finally {
+      if (importController.current === importRequest)
+        importController.current = null;
     }
   }
   function seek(value, play = false) {
@@ -330,19 +415,26 @@ export default function VideoStudioPanel({
     cursor.current = target.index;
     const element = audio.current,
       a = t.audios[target.index];
+    if (!element) return;
+    if (pendingSeek.current)
+      element.removeEventListener("loadedmetadata", pendingSeek.current);
+    pendingSeek.current = null;
     const changed = element.getAttribute("src") !== a.url;
     if (changed) {
       element.src = a.url;
       element.load();
     }
     const position = () => {
+      if (element.getAttribute("src") !== a.url) return;
       try {
         element.currentTime = target.offset;
       } catch {}
     };
     position();
-    if (changed)
+    if (changed || element.readyState < 1) {
+      pendingSeek.current = position;
       element.addEventListener("loadedmetadata", position, { once: true });
+    }
     setTime(value);
     if (play) {
       onStart?.();
@@ -354,7 +446,11 @@ export default function VideoStudioPanel({
   }
   function timeUpdate() {
     const t = timelineRef.current;
-    if (!t) return;
+    if (
+      !t ||
+      audio.current?.getAttribute("src") !== t.audios[cursor.current]?.url
+    )
+      return;
     const start = t.audios
       .slice(0, cursor.current)
       .reduce((n, a) => n + a.duration, 0);
@@ -362,7 +458,11 @@ export default function VideoStudioPanel({
   }
   function ended() {
     const t = timelineRef.current;
-    if (!t) return;
+    if (
+      !t ||
+      audio.current?.getAttribute("src") !== t.audios[cursor.current]?.url
+    )
+      return;
     const next = cursor.current + 1;
     if (next < t.audios.length) {
       const start = t.audios.slice(0, next).reduce((n, a) => n + a.duration, 0);
@@ -387,14 +487,21 @@ export default function VideoStudioPanel({
   }
   async function exportMp4() {
     if (!timeline || busyRef.current) return;
+    if (timeline.precision === "estimated") {
+      setError(
+        "整篇配音尚无可验证时间戳，不能按估算时间导出。请确认全部起止时间，或下载 MP3 后导入并执行逐句对齐，也可使用逐镜 MP3。",
+      );
+      return;
+    }
     pause();
     onStart?.();
     busyRef.current = true;
+    setExportFailed(false);
     setError("");
     setProgress({ percent: 0, message: "正在创建渲染任务…" });
-    setResult(null);
     const c = new AbortController();
     controller.current = c;
+    job.current = null;
     const snapshot = timeline;
     const temp = document.createElement("canvas");
     temp.width = 1080;
@@ -439,6 +546,7 @@ export default function VideoStudioPanel({
           : err.message,
       );
       setProgress(null);
+      setExportFailed(err.name !== "AbortError");
     } finally {
       busyRef.current = false;
       controller.current = null;
@@ -554,7 +662,24 @@ export default function VideoStudioPanel({
           )}
           <details>
             <summary>手动填写 / 校对每镜开始与结束时间</summary>
-            <audio controls playsInline src={imported.url} preload="metadata" />
+            <audio
+              ref={inspector}
+              aria-label="手动校准试听（仅音频）"
+              controls
+              playsInline
+              src={imported.url}
+              preload="metadata"
+              onPlay={() => {
+                startingInspector.current = true;
+                try {
+                  onStart?.();
+                  audio.current?.pause();
+                  setPlaying(false);
+                } finally {
+                  startingInspector.current = false;
+                }
+              }}
+            />
             {project.scenes.map((scene, i) => (
               <div className="field" key={scene.id}>
                 <span>
@@ -609,6 +734,12 @@ export default function VideoStudioPanel({
       <p className="muted">
         每镜必须已有图片和对应文字。生成新音频后请重新准备。预览和导出使用准备时音频快照，字幕样式和图片使用当前配置；导出开始后是固定快照。
       </p>
+      <p className="muted">
+        项目 JSON 包含文章、分镜、图片和时间轴，不包含 MP3。请另行保留 MP3
+        原文件；刷新后重新导入同一文件可恢复对齐。浏览器本地存档最多 5
+        MB；较大项目可导出最多 50 MB 的 JSON
+        文件并重新导入。保存失败不会覆盖旧存档，刷新前请先完成文件备份。
+      </p>
       {(error || timingError) && (
         <p className="validation-error" role="alert">
           {error || timingError}
@@ -618,6 +749,7 @@ export default function VideoStudioPanel({
         ref={audio}
         preload="metadata"
         onTimeUpdate={timeUpdate}
+        onSeeked={timeUpdate}
         onEnded={ended}
         onPlay={() => setPlaying(true)}
         onPause={() => setPlaying(false)}
@@ -645,6 +777,19 @@ export default function VideoStudioPanel({
                     : "估算同步 · 按真实总时长和英文词数分配"}{" "}
             · 长字幕翻页按本镜时间比例估算 · 30fps 精度
           </p>
+          {timeline.frames.some(
+            (f) => !f.plan.scene.english && !f.plan.scene.chinese,
+          ) && (
+            <p className="muted">
+              时轴包含无字幕区间，期间保留图片。请试听确认这些区间确实无需字幕；可调整每镜起止时间。
+            </p>
+          )}
+          {timeline.precision === "estimated" && (
+            <p className="validation-error">
+              当前仅为估算预览。导出前请在下方逐句校准，并点击「确认当前全部起止时间」；或导入
+              MP3 执行强制对齐。不会自动消耗 API 额度。
+            </p>
+          )}
           {timeline.manualStale && (
             <p className="tip">
               已有手动时轴与当前音频或文字不符，已停用，请重新微调。
@@ -703,13 +848,44 @@ export default function VideoStudioPanel({
                 ))}
               </div>
             ))}
+            {timeline.precision === "estimated" && (
+              <button
+                onClick={() => {
+                  const cues = timeline.ranges.map((r) => ({
+                    start: r.start,
+                    end: Math.min(r.end, timeline.sourceDuration),
+                  }));
+                  if (
+                    !validateCues(cues, cues.length, timeline.sourceDuration)
+                  ) {
+                    setError("当前起止时间无效，请逐句修改。");
+                    return;
+                  }
+                  pause();
+                  onTimingChange({
+                    signature: timeline.signature,
+                    cues,
+                    source: "manual",
+                  });
+                }}
+              >
+                确认当前全部起止时间（请先试听校准）
+              </button>
+            )}
             <button
               onClick={() => {
+                if (
+                  source === "imported" &&
+                  !window.confirm(
+                    "清除当前已确认的时轴？之后需要重新对齐或手动校准，MP3 保留。",
+                  )
+                )
+                  return;
                 pause();
                 onTimingChange(null);
               }}
             >
-              恢复自动时轴
+              {source === "imported" ? "清除时轴并重新校准" : "恢复自动时轴"}
             </button>
           </details>
           <button
@@ -717,7 +893,9 @@ export default function VideoStudioPanel({
             disabled={busyRef.current || !rendererReady}
             onClick={exportMp4}
           >
-            导出真实 MP4（H.264 + AAC）
+            {exportFailed && !busyRef.current
+              ? "重试导出 MP4（H.264 + AAC）"
+              : "导出真实 MP4（H.264 + AAC）"}
           </button>
         </>
       )}

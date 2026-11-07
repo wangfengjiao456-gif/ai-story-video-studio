@@ -27,6 +27,7 @@ import {
   textError,
   TITLE_LIMIT,
   PROJECT_BYTES_LIMIT,
+  PROJECT_FILE_BYTES_LIMIT,
 } from "./model.js";
 import { browserVoiceProvider as voice } from "./services/providers.js";
 import Preview from "./components/Preview.jsx";
@@ -82,7 +83,13 @@ export default function App() {
     !!startup.recovery && !startup.project,
   );
   const [videoEpoch, setVideoEpoch] = useState(0);
-  const videoPause = useRef(null);
+  const videoPause = useRef(null),
+    videoTransport = useRef(null);
+  const [videoPlayback, setVideoPlayback] = useState({
+    ready: false,
+    playing: false,
+  });
+  const [videoFrame, setVideoFrame] = useState(null);
   const ai = useVoiceStudio(p, {
     onStart: () => {
       videoPause.current?.();
@@ -186,7 +193,7 @@ export default function App() {
   }
   function exportProject() {
     try {
-      downloadProject(p);
+      downloadProject(p, { maxBytes: PROJECT_FILE_BYTES_LIMIT });
     } catch (err) {
       setMessage(`导出失败：${err.message} 当前内容未被修改。`);
     }
@@ -236,11 +243,13 @@ export default function App() {
     e.target.value = "";
     if (!file) return;
     try {
-      if (file.size > PROJECT_BYTES_LIMIT)
+      if (file.size > PROJECT_FILE_BYTES_LIMIT)
         throw Error(
-          "项目总大小超过 5 MB，请缩短文本或减少分镜后再保存或导出。",
+          "项目文件超过 50 MB，原工作区未修改。请保留原图并减小副本。",
         );
-      const project = parseProject(await file.text());
+      const project = parseProject(await file.text(), {
+        maxBytes: PROJECT_FILE_BYTES_LIMIT,
+      });
       if (!window.confirm("导入将替换当前工作区，未保存内容会丢失。是否继续？"))
         return;
       stop();
@@ -250,7 +259,11 @@ export default function App() {
       setP(project);
       setBlocked(false);
       setIndex(0);
-      setMessage("导入成功，点击保存可存入当前浏览器。");
+      setMessage(
+        file.size > PROJECT_BYTES_LIMIT
+          ? "已导入大项目；超过浏览器 5 MB 限额，请用导出 JSON 文件保存最新修改，刷新前务必备份，MP3 请另存。"
+          : "导入成功，点击保存可存入当前浏览器。",
+      );
     } catch (err) {
       setMessage(`导入失败：${err.message}`);
     }
@@ -411,6 +424,9 @@ export default function App() {
                 <VideoStudioPanel
                   key={videoEpoch}
                   pauseRef={videoPause}
+                  transportRef={videoTransport}
+                  onPlaybackChange={setVideoPlayback}
+                  onPreviewFrame={setVideoFrame}
                   project={p}
                   ai={ai}
                   hidden={tab !== "video"}
@@ -766,7 +782,17 @@ export default function App() {
                 )}
               </main>
               <Preview
-                project={previewProject}
+                project={
+                  tab === "video"
+                    ? { ...previewProject, ratio: "9:16" }
+                    : previewProject
+                }
+                videoFrame={tab === "video" ? videoFrame : null}
+                onSeekScene={
+                  tab === "video" && videoPlayback.ready
+                    ? (i) => videoTransport.current?.seekScene(i)
+                    : null
+                }
                 audioRef={ai.audioRef}
                 audioSelected={
                   ai.selected === "article"
@@ -796,10 +822,18 @@ export default function App() {
                 }
                 index={index}
                 setIndex={setIndex}
-                playing={playing || ai.playing}
+                playing={
+                  tab === "video" && videoPlayback.ready
+                    ? videoPlayback.playing
+                    : playing || ai.playing
+                }
                 stop={stop}
                 toggle={() => {
                   voice.stop();
+                  if (tab === "video" && videoPlayback.ready) {
+                    videoTransport.current?.toggle();
+                    return;
+                  }
                   if (ai.playing || (tab === "ai" && ai.selected)) {
                     ai.toggle();
                     return;
@@ -832,7 +866,18 @@ export default function App() {
             >
               应用到原分镜
             </button>
-            <button onClick={imageGeneration.clearPending}>关闭结果</button>
+            <button
+              onClick={() => {
+                if (
+                  window.confirm(
+                    "放弃这张未应用的生成图片？如尚未下载，结果将无法恢复。",
+                  )
+                )
+                  imageGeneration.clearPending();
+              }}
+            >
+              放弃未应用图片
+            </button>
           </div>
         )}
         <footer>

@@ -16,7 +16,7 @@ import {
 const req = {
   method: "POST",
   headers: { origin: "https://studio.test", host: "studio.test" },
-  body: { audio: "SUQz", text: "One. Two." },
+  body: { audio: "SUQz", text: "One. Two.", confirmed: true },
 };
 const res = () => ({
   setHeader() {},

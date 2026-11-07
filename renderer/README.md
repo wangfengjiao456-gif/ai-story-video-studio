@@ -20,7 +20,7 @@ docker run --rm -p 8000:8000 --env-file /path/to/private-renderer.env story-rend
 - `PORT`：默认 8000，宿主平台可注入。
 - `RENDERER_DATA_DIR`：默认 `/tmp/story-renderer`，需可写。
 
-反向代理须允许单文件 50 MB 上传，保留 Authorization、Origin、Range 请求头，支持 PUT / POST / GET / DELETE / OPTIONS，读写超时至少 20 分钟。不要记录 URL query（包含短期 job token）或媒体请求体。服务自身不记录访问 URL、密钥或文章内容。
+反向代理须允许单文件 50 MB 上传，保留 Authorization、Origin、Range 请求头，支持 PUT / POST / GET / HEAD / DELETE / OPTIONS，读写超时至少 20 分钟。不要记录 URL query（包含短期 job token）或媒体请求体。服务自身不记录访问 URL、密钥或文章内容。
 
 在**当前 Vercel Preview** 新增：
 
@@ -50,3 +50,12 @@ python3 renderer/test_renderer.py
 ```
 
 测试会真实启动 HTTP 服务，验证鉴权、上传、不可重复启动、H.264/AAC 编码和 Range 下载；不调用 AI。Docker 镜像中已安装 FFmpeg。此实现按单实例个人创作工作室设计，未提供分布式队列、长期云存储、恢复中断任务或多租户账户系统。
+
+
+## 当前完整验证
+
+根目录 `npm run test:renderer` 执行真实解码/编码测试；`npm run test:e2e` 自主启动本地服务，验证十镜、浏览器和真实下载；`STUDIO_URL=https://your-preview.vercel.app npm run verify:preview` 对部署后的 Preview/worker 实际运行同样链路。安装与资源生成说明见 [DEPLOYMENT.md](../DEPLOYMENT.md)。不调用收费 AI。
+
+服务核对每段实际解码样本时长，拒绝单段或累计偏差超过一帧的任务，不擅自裁切、拉伸或插入逐段静音。渲染全程超时为 15 分钟；取消不会被后到的完成结果覆盖。定时清理过期/取消任务及启动时清理孤立目录。媒体上传先完整接收后原子替换，上传等待不锁住所有任务状态查询。下载支持 HEAD、标准 Range、Content-Disposition，跨域暴露必要响应头。
+
+Docker 使用非 root 用户，COPY 显式设置文件所有者，避免宿主机文件权限为 0600 时镜像能构建但无法启动。CI 在 2CPU/2GB 的实际容器中运行同一编码测试。

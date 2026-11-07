@@ -123,7 +123,7 @@ test("未部署渲染服务时不会上传帧或虚报完成", async () => {
   const { p, assets } = fixture();
   await assert.rejects(
     renderVideo(
-      buildVideoTimeline(p, assets, 0.8),
+      buildVideoTimeline(p, assets, 0.8, "scenes"),
       () => assert.fail("不应制作上传帧"),
       {
         fetchImpl: async () =>

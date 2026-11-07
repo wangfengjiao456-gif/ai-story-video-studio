@@ -121,6 +121,10 @@ for (let i = 0; i < p.scenes.length; i++) {
       "-f",
       "mp3",
       "-show_format",
+      "-show_streams",
+      "-show_frames",
+      "-show_entries",
+      "frame=nb_samples",
       "-of",
       "json",
       audio,
@@ -130,7 +134,9 @@ for (let i = 0; i < p.scenes.length; i++) {
     text: p.scenes[i].english,
     speed: 0.8,
     blob: new Blob([readFileSync(audio)], { type: "audio/mpeg" }),
-    duration: Number(info.format.duration),
+    duration:
+      info.frames.reduce((n, f) => n + f.nb_samples, 0) /
+      Number(info.streams.find((s) => s.codec_type === "audio").sample_rate),
   };
 }
 const canvas = createCanvas(1080, 1920),

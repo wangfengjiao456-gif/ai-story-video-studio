@@ -1,3 +1,4 @@
+import { audioFingerprint } from "../video/audioIdentity.js";
 import { useEffect, useRef, useState } from "react";
 import { DEFAULT_SPEED } from "../voiceConfig.js";
 import {
@@ -86,9 +87,11 @@ export default function useVoiceStudio(project, { onStart, onFrame }) {
       const data = await generateSpeech(text, requestedSpeed, {
         signal: controller.signal,
       });
+      const fingerprint = await audioFingerprint(data.blob);
       if (controller.signal.aborted || request.current !== controller) return;
       const asset = {
         ...data,
+        fingerprint,
         url: URL.createObjectURL(data.blob),
         text,
         speed: requestedSpeed,

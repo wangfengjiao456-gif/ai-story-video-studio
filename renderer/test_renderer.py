@@ -1,3 +1,5 @@
+import threading
+from unittest.mock import patch
 import contextlib,json,os,shutil,socket,struct,subprocess,sys,tempfile,time,unittest,urllib.request,urllib.error,zlib
 from pathlib import Path
 from render import validate_manifest,render,probe,progress_value
@@ -27,6 +29,54 @@ class RendererTests(unittest.TestCase):
             self.assertEqual(len(data),6)
             self.assertGreater(data[0],180);self.assertLess(data[1],90)
             self.assertGreater(data[4],180);self.assertLess(data[3],90)
+
+    @unittest.skipUnless(shutil.which('ffmpeg') and shutil.which('ffprobe'),'FFmpeg not installed')
+    def test_ten_scenes_keep_order_silence_and_complete_audio(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);colors=[(30+i*20,220-i*17,40+i*12) for i in range(10)]
+            for i,color in enumerate(colors):png(root/f'frame-{i}.png',color)
+            subprocess.run(['ffmpeg','-v','error','-f','lavfi','-i','sine=frequency=440:sample_rate=48000:duration=2.5','-af','adelay=200,apad=pad_dur=0.2','-c:a','libmp3lame','-y',str(root/'audio-0.mp3')],check=True)
+            duration=float(probe(root/'audio-0.mp3',True)['format']['duration'])
+            lengths=[6,8,5,10,7,6,9,8,6,22]
+            manifest={'version':1,'width':1080,'height':1920,'fps':30,'frames':[{'frames':n} for n in lengths],'audios':[{'duration':duration}]}
+            result=render(root,manifest)
+            self.assertLessEqual(abs(result['duration']-duration),1/30+.001)
+            starts=[];cursor=0
+            for n in lengths:starts.append(cursor);cursor+=n
+            select='+'.join(f'eq(n\\,{n})' for n in starts)
+            pixels=subprocess.check_output(['ffmpeg','-v','error','-i',str(root/'video.mp4'),'-vf',f'select={select},scale=1:1','-vsync','0','-f','rawvideo','-pix_fmt','rgb24','pipe:1'])
+            self.assertEqual(len(pixels),30)
+            for i,color in enumerate(colors):self.assertLess(max(abs(pixels[i*3+j]-color[j]) for j in range(3)),12)
+            samples=subprocess.check_output(['ffmpeg','-v','error','-i',str(root/'video.mp4'),'-vn','-ar','8000','-ac','1','-f','s16le','pipe:1'])
+            audio=struct.unpack('<'+'h'*(len(samples)//2),samples)
+            # The late tone survives; both original silent margins remain, with no tempo change.
+            self.assertGreater(max(abs(x) for x in audio[int(2.55*8000):int(2.65*8000)]),1000)
+            self.assertLess(max(abs(x) for x in audio[:int(.1*8000)]),100)
+            self.assertLess(max(abs(x) for x in audio[int(2.8*8000):int(2.88*8000)]),100)
+            bad={**manifest,'audios':[{'duration':duration-.2}],'frames':[{'frames':81}]}
+            with self.assertRaisesRegex(ValueError,'未裁切或拉伸'):render(root,bad)
+            with self.assertRaisesRegex(ValueError,'超时'):render(root,manifest,timeout_seconds=0)
+
+    def test_cleanup_removes_expired_cancelled_and_orphaned_files_without_touching_active_jobs(self):
+        import server
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);ids=['a'*32,'b'*32,'c'*32,'d'*32]
+            for id in ids:(root/id).mkdir()
+            (root/'unrelated').mkdir()
+            jobs={ids[0]:{'state':'complete','expiresAt':0,'cancelled':False},ids[1]:{'state':'rendering','expiresAt':0,'cancelled':False},ids[2]:{'state':'error','expiresAt':time.time()+100,'cancelled':True}}
+            with patch.object(server,'ROOT',root),patch.object(server,'JOBS',jobs):server.cleanup(orphaned=True)
+            self.assertTrue((root/ids[1]).exists());self.assertTrue((root/'unrelated').exists())
+            for i in [0,2,3]:self.assertFalse((root/ids[i]).exists())
+
+    def test_cancelled_result_cannot_become_complete(self):
+        import server
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);id='e'*32;(root/id).mkdir()
+            job={'state':'queued','cancelled':False,'process':None,'manifest':{}}
+            slot=threading.BoundedSemaphore(1);slot.acquire()
+            def complete_after_cancel(*args,**kwargs):job['cancelled']=True;return {'duration':1}
+            with patch.object(server,'ROOT',root),patch.object(server,'JOBS',{id:job}),patch.object(server,'SLOT',slot),patch.object(server,'render',complete_after_cancel):server.run(id)
+            self.assertEqual(job['state'],'error');self.assertNotIn('result',job);self.assertFalse((root/id).exists());self.assertTrue(slot.acquire(False))
 
     def test_rejects_invalid_manifest(self):
         for m in [{},{'version':1,'width':1080,'height':1920,'fps':30,'frames':[{'frames':-1}],'audios':[{'duration':1}]}]:
@@ -59,6 +109,10 @@ class RendererTests(unittest.TestCase):
                 response=request('/jobs','POST',json.dumps(manifest).encode(),{'Content-Type':'application/json','Authorization':'Bearer '+env['RENDERER_API_KEY']});job=json.load(response);prefix='/jobs/'+job['jobId'];auth={'Authorization':'Bearer '+job['token'],'Origin':'https://studio.test'}
                 with self.assertRaises(urllib.error.HTTPError):request(prefix+'/../../secrets','PUT',b'bad',auth)
                 request(prefix+'/frame-0.png','PUT',(root/'fixture.png').read_bytes(),auth).close();request(prefix+'/audio-0.mp3','PUT',(root/'fixture.mp3').read_bytes(),auth).close()
+                # Replacing the same upload is allowed and must not accumulate size.
+                request(prefix+'/frame-0.png','PUT',(root/'fixture.png').read_bytes(),auth).close()
+                cors=request(prefix,'OPTIONS',headers={'Origin':'https://studio.test','Access-Control-Request-Method':'HEAD'})
+                self.assertIn('HEAD',cors.headers['Access-Control-Allow-Methods']);cors.close()
                 request(prefix+'/start','POST',b'',auth).close()
                 with self.assertRaises(urllib.error.HTTPError) as duplicate:request(prefix+'/start','POST',b'',auth)
                 self.assertEqual(duplicate.exception.code,409)
@@ -70,6 +124,11 @@ class RendererTests(unittest.TestCase):
                 self.assertEqual(state['state'],'complete',state)
                 self.assertEqual(state['result']['videoCodec'],'h264');self.assertEqual(state['result']['audioCodec'],'aac');self.assertLessEqual(abs(state['result']['duration']-duration),1/30+.001)
                 response=request(prefix+'/video?token='+job['token'],headers={'Range':'bytes=0-99','Origin':'https://studio.test'})
+                head=request(prefix+'/video?token='+job['token']+'&download=1','HEAD',headers={'Origin':'https://studio.test'})
+                self.assertEqual(head.status,200);self.assertEqual(head.read(),b'');self.assertIn('attachment',head.headers['Content-Disposition']);self.assertIn('Content-Length',head.headers['Access-Control-Expose-Headers'])
+                suffix=request(prefix+'/video?token='+job['token'],headers={'Range':'bytes=-100','Origin':'https://studio.test'});self.assertEqual(len(suffix.read()),100)
+                with self.assertRaises(urllib.error.HTTPError) as invalid:request(prefix+'/video?token='+job['token'],headers={'Range':'bytes=999999999-'})
+                self.assertEqual(invalid.exception.code,416);self.assertIn('bytes */',invalid.exception.headers['Content-Range'])
                 self.assertEqual(response.status,206);self.assertEqual(len(response.read()),100);self.assertIn('ftyp',request(prefix+'/video?token='+job['token']).read(64).decode('latin1'))
             finally:
                 process.terminate();process.wait(timeout=10)

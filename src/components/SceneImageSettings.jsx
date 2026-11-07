@@ -81,7 +81,13 @@ export default function SceneImageSettings({
       )}
       <div className="ai-actions">
         <button
-          disabled={!!generation?.busy || busy || checking || confirm}
+          disabled={
+            !!generation?.busy ||
+            !!generation?.pending ||
+            busy ||
+            checking ||
+            confirm
+          }
           onClick={async () => {
             if (generateLock.current || confirm || generation?.busy) return;
             generateLock.current = true;

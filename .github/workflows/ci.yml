@@ -25,5 +25,21 @@ jobs:
       - run: npm test
       - run: npm run build
       - name: Install FFmpeg for real encoding tests
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg
-      - run: python3 renderer/test_renderer.py
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg fonts-noto-cjk
+      - run: npm run test:renderer
+      - name: Build the deployable renderer image
+        run: docker build -f renderer/Dockerfile -t story-renderer:ci .
+      - name: Run real encoding tests as the Docker non-root user
+        run: docker run --rm --cpus=2 --memory=2g story-renderer:ci python test_renderer.py
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
+        timeout-minutes: 10
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: video-regression
+          path: |
+            work/e2e/*.log
+            work/mp4-regression/browser-export.mp4
+            work/deployment-verification/preview-render.mp4
+          retention-days: 7
