@@ -7,7 +7,7 @@
 - `npm test`：111 项，包括既有 V1–V3.1、文本上限、保存失败保护、语音参数、对齐、JSON、图片与新增韧性测试。
 - `npm run test:renderer`：7 项真实 FFmpeg 测试。
 - `npm run build`：通过。构建分别注入三类无效标记密钥，`dist` 无标记泄漏。
-- Docker 镜像实际构建成功；非 root 用户、2CPU / 2GB 约束下同样 7 项编码测试通过。
+- Docker 镜像实际构建成功；非 root 用户、2CPU / 2GB 约束下同样 7 项编码测试通过；另在 1CPU / 2GB 下实际完成十镜、34.582秒、H.264/AAC 样片。
 - `CHROMIUM_PATH=/usr/bin/chromium npm run test:e2e`：实际运行本地 Vercel 处理代码、Vite、FFmpeg、浏览器和真实部署验证脚本。费用接口仅使用模拟上游，测试不会读取或调用真实 AI Key。
 
 十镜素材为程序插画、Flite 英文语音和对应中文，句长不同；每句配音先独立合成、解码取得已知时间，然后合成整篇 MP3。浏览器回归使用这些实际片段边界做人工时间轴输入，不以字符或词数分配分镜长度。Forced Alignment 的模拟返回只证明合约/状态处理，不证明真实模型的语音定位质量。
@@ -38,3 +38,7 @@
 ## 复现与线上配置
 
 完整命令、准确环境变量和控制台位置见 [DEPLOYMENT.md](DEPLOYMENT.md)。`npm run test:e2e` 自动启动/关闭隔离服务；部署后的 `STUDIO_URL=https://your-preview.vercel.app npm run verify:preview` 实际创建合成素材的渲染任务、下载并核验。GitHub CI 自动上传 `video-regression` 日志/MP4 artifact（7天），不包含服务密钥或任务 token。
+
+## GitHub CI 留档
+
+代码提交 `e4a37ca5c49d4cf0ccb665939bc999519743b9ab` 的 [Studio checks #19](https://github.com/wangfengjiao456-gif/ai-story-video-studio/actions/runs/42353149559) 已通过：依赖、111项测试、构建、主机/容器编码、浏览器回归和真实HTTP下载验证；`video-regression` artifact 已上传（约2.06MB、7天保留），包含两份实际生成的 MP4。Vercel 也已报告该提交 Preview Ready。以上不是用户原始项目或真实收费 API 验收。

@@ -4,7 +4,7 @@ Vercel 保留网页、ElevenLabs / OpenAI 代理和短任务创建代理。CPU �
 
 ## 部署
 
-在支持长运行 Docker 容器和 HTTPS 的服务（例如自有 VPS、Render/Railway 容器服务）部署。使用单实例，至少 2 vCPU、2 GB RAM 和 3 GB 可写临时空间，不设置多副本或自动休眠；当前任务状态在进程内，重启会失去任务。HTTPS 由平台或反向代理终止。
+在支持长运行 Docker 容器和 HTTPS 的服务（例如自有 VPS、Render/Railway 容器服务）部署。使用单实例，建议 2 vCPU、2 GB RAM 和 3 GB 可写临时空间（本地 1CPU/2GB 也已完成约35秒十镜样片，长项目需实测），不设置多副本或自动休眠；当前任务状态在进程内，重启会失去任务。HTTPS 由平台或反向代理终止。
 
 从仓库根目录构建：
 

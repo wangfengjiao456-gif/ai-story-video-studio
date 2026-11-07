@@ -4,7 +4,7 @@ Vercel 只运行前端、密钥代理和小型 API；FFmpeg 在独立 Docker 服
 
 ## 1. 部署独立 MP4 服务（无需任何 AI 密钥）
 
-在 Render 控制台选择 New → Blueprint，连接本 GitHub 仓库，选择 `feat/story-studio-v3-1` 分支，使用根目录 `render.yaml`。该配置使用付费 standard 实例（请先查看 Render 当期价格）；不要误把渲染服务当作免费的 Vercel Function。可改为其他 Docker 主机，要求至少 2 vCPU、2GB RAM、3GB 临时空间、HTTPS、单实例，禁止多实例自动扩容（任务状态在单机内存）。
+在 Render 控制台选择 New → Blueprint，连接本 GitHub 仓库，选择 `feat/story-studio-v3-1` 分支，使用根目录 `render.yaml`。该配置使用付费 standard 实例（请先查看 Render 当期价格）；不要误把渲染服务当作免费的 Vercel Function。可改为其他 Docker 主机，建议 2 vCPU、2GB RAM、3GB 临时空间、HTTPS、单实例，禁止多实例自动扩容（任务状态在单机内存）。已在 1CPU / 2GB 容器中实际编码约 35 秒十镜样片；standard 方案的当期 CPU、内存和价格请以 Render 创建页面为准，较长项目若超时需升级资源。
 
 Blueprint 提示时填写 `ALLOWED_ORIGINS`：当前 Vercel Preview **完整来源**，例如 `https://your-preview.vercel.app`，无末尾斜杠；多个来源用逗号分隔。建议先在 Vercel 绑定固定 Preview 域名，否则每次 Preview 域名变化需要更新。不要写 `*`。
 
