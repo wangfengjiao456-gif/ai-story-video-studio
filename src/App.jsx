@@ -1,3 +1,4 @@
+import CreativeAssistant from "./components/CreativeAssistant.jsx";
 import { voiceMode, appendVoiceRecord } from "./creation/voiceRecovery.js";
 import CreationStudio from "./components/CreationStudio.jsx";
 import { SIGNATURE_STYLE } from "./creation/project.js";
@@ -57,6 +58,7 @@ const tabs = [
   ["audio", "配音与字幕", AudioLines],
   ["ai", "AI 配音", Sparkles],
   ["video", "视频预览与导出", Film],
+  ["assistant", "AI 创作助手", Sparkles],
 ];
 function load() {
   let result;
@@ -99,13 +101,16 @@ export default function App() {
       setMessage("请先处理原存档恢复，再使用智能制作；原始内容未覆盖。");
       return false;
     }
-    setP(next);
-    if (!options.saveNow) return true;
+    if (!options.saveNow) {
+      setP(next);
+      return true;
+    }
     try {
       const result = saveProject(localStorage, next);
+      setP(next);
       setLastSavedProject(next);
       setBackups(result.backups);
-      setSaveStatus("智能规划已立即保存到当前网址；音频需单独备份。");
+      setSaveStatus("创作内容已保存到当前网址；原始音频仍需单独备份。");
       return true;
     } catch (error) {
       setSaveStatus(
@@ -417,7 +422,7 @@ export default function App() {
           </span>
         </a>
         <div className="workspace-label">
-          创作工作台 <span>V4.0</span>
+          创作工作台 <span>V4.1</span>
         </div>
         <nav>
           {tabs.map(([id, label, Icon], i) => (
@@ -575,6 +580,28 @@ export default function App() {
                 />
                 {tab === "ai" && <ServiceStatus />}
                 <AIVoicePanel project={p} studio={ai} hidden={tab !== "ai"} />
+                {tab === "assistant" && (
+                  !blocked && !recovery ? (
+                    <CreativeAssistant
+                      key={videoEpoch}
+                      project={p}
+                      onProject={commitCreationProject}
+                      generation={imageGeneration}
+                      ai={ai}
+                      onReference={setCharacterReference}
+                      onVideo={(prepare) => {
+                        setTab("video");
+                        if (prepare === true)
+                          setAutoPrepareRequest({
+                            id: Date.now(),
+                            source: voiceMode(p, ai.assets, ai.speed),
+                          });
+                      }}
+                    />
+                  ) : (
+                    <p role="status">请先处理原项目恢复，再使用创作助手。</p>
+                  )
+                )}
                 {tab === "article" && (
                   <>
                     {!blocked && !recovery && (
@@ -1081,7 +1108,7 @@ export default function App() {
           </div>
         )}
         <footer>
-          用故事连接语言，用创作发现可能。<span>STORY STUDIO / V4.0</span>
+          用故事连接语言，用创作发现可能。<span>STORY STUDIO / V4.1</span>
         </footer>
       </div>
       {message && (

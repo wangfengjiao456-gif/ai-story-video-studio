@@ -1,5 +1,7 @@
 # MP3 对齐与真实 MP4：Preview 部署
 
+V4.1 AI 创作助手增量操作及 Preview 环境变量说明见 [V4_1_GUIDE.md](V4_1_GUIDE.md)；原有制作与Render步骤保持适用。
+
 **V4 用户先阅读 [V4_GUIDE.md](V4_GUIDE.md)**，使用 `feat/story-studio-v4`。以下 V3.1 部署记录保留作兼容参考；不要照旧分支部署 V4 混音任务。
 
 Vercel 只运行前端、密钥代理和小型 API；FFmpeg 在独立 Docker 服务运行。**只部署 Vercel 不会具备 MP4 编码能力。** 本仓库包含完整服务，必须完成下面两部分配置；当前修复不会自动修改 Production。

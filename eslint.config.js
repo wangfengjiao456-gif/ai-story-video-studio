@@ -38,6 +38,7 @@ export default [
       "tests/**/*.js",
       "scripts/browser-video-regression.mjs",
       "scripts/browser-creation-v4.mjs",
+      "scripts/browser-assistant-v41.mjs",
     ],
     languageOptions: { globals: { ...globals.browser, ...globals.node } },
   },

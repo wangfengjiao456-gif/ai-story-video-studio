@@ -10,6 +10,7 @@ on:
         feat/story-studio-v3,
         feat/story-studio-v3-1,
         feat/story-studio-v4,
+        feat/story-studio-v4-1,
       ]
 permissions:
   contents: read
@@ -42,6 +43,7 @@ jobs:
           name: video-regression
           path: |
             work/v4-regression/*
+            work/v41-regression/*
             work/e2e/*.log
             work/mp4-regression/browser-export.mp4
             work/deployment-verification/preview-render.mp4
