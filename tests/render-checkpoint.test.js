@@ -28,3 +28,8 @@ test('a started render survives ambiguous network failure and produces a resumab
  await assert.rejects(renderVideo(timeline,async()=>new Blob(['png']),{preserveStartedJob:true,onCheckpoint:c=>saved.push(c),readRetryMs:0,fetchImpl:async(url,o={})=>{calls.push(o.method||'GET');if(url==='/api/video-jobs')return Response.json(record().job);if(o.method==='PUT'||o.method==='POST')return Response.json({ok:true});throw new TypeError('offline');}}),e=>e.recoverableJob?.phase==='submitted');
  assert.deepEqual(saved.map(s=>s.phase),['uploading','submitted']);assert.equal(calls.filter(c=>c==='POST').length,2);assert.equal(calls.includes('DELETE'),false);
 });
+test('leaving during final download verification preserves the completed task checkpoint',async()=>{
+ const c=new AbortController(),calls=[],saved=[];
+ await assert.rejects(renderVideo({frames:[{}],audios:[{blob:new Blob(['audio'])}],manifest:{},sourceDuration:2},async()=>new Blob(['png']),{signal:c.signal,preserveStartedJob:true,onCheckpoint:r=>saved.push(r),fetchImpl:async(url,o={})=>{calls.push(o.method||'GET');if(url==='/api/video-jobs')return Response.json(record().job);if(o.method==='PUT'||o.method==='POST')return Response.json({ok:true});if(o.method==='HEAD'){c.abort(new DOMException('Page left','PageExit'));throw c.signal.reason;}return Response.json({state:'complete',result});}}),e=>e.recoverableJob?.phase==='download');
+ assert.equal(saved.at(-1).phase,'download');assert.equal(calls.includes('DELETE'),false);
+});

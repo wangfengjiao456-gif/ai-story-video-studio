@@ -247,10 +247,10 @@ export async function renderVideo(
       });
     }
   } catch (error) {
-    const preserve = preserveStartedJob && submitted && !completedVideo &&
-      ((!signal?.aborted && (error.retryable || error.name==="TypeError" || error.name==="TimeoutError" || combined.reason?.name==="TimeoutError")) || signal?.reason?.name==="PageExit");
+    const preserve = preserveStartedJob && submitted &&
+      ((!completedVideo && !signal?.aborted && (error.retryable || error.name==="TypeError" || error.name==="TimeoutError" || combined.reason?.name==="TimeoutError")) || signal?.reason?.name==="PageExit");
     if(preserve){
-      throw Object.assign(Error("渲染连接中断或页面离开，原任务已保留。请恢复原任务进度，不要重复提交渲染。"),{recoverableJob:{phase:"submitted",job,duration:timeline.sourceDuration}});
+      throw Object.assign(Error("渲染连接中断或页面离开，原任务已保留。请恢复原任务进度，不要重复提交渲染。"),{recoverableJob:{phase:completedVideo?"download":"submitted",job,duration:timeline.sourceDuration}});
     }
     if (job && !completedVideo) await cancelRender(job, { fetchImpl });
     if (completedVideo && !signal?.aborted && !error.terminalDownload) {
