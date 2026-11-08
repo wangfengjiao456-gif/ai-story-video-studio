@@ -128,3 +128,9 @@ test('unrelated requests and pair rewrites omit oversized old articles; explicit
  assert.throws(()=>assistantContext(p,'根据这篇文章制作视频','content'),/尚未发送请求/);
  assert.deepEqual(assistantContext({english:'Go.',chinese:'走。'},'Use this article.','content'),{english:'Go.',chinese:'走。'});
 });
+test('adopting a one-sentence revision preserves unrelated illustrations, scene IDs and recoverable clip audio',()=>{
+ const p=initialProject();p.scenes=splitArticle(p.english,p.chinese);p.assistant={request:'话题',template:'英语绘本'};const first=adoptContent(p,content());
+ const pic={kind:'upload',dataUrl:'unchanged image'};first.scenes.forEach(s=>s.imageRef=pic);first.voiceRecords=[{key:'scene-1',text:first.scenes[1].english,speed:.8,fingerprint:'a'.repeat(64)},{key:'article',text:first.english,speed:.8,fingerprint:'b'.repeat(64)}];
+ const revision=structuredClone(first.assistant.content);revision.pairs[0].english='Take one step.';revision.plan.beats[0].prompt='A new single scene';const next=adoptContent(first,revision);
+ assert.equal(next.scenes[1].id,first.scenes[1].id);assert.equal(next.scenes[1].imageRef,pic);assert.equal(next.scenes[0].imageRef,undefined);assert.equal(next.voiceRecords.length,1);assert.equal(next.voiceRecords[0].key,'scene-1');assert.equal(first.scenes[0].imageRef,pic);
+});

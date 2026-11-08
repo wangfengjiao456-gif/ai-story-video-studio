@@ -1,3 +1,4 @@
+import {cleanRenderCheckpoint} from "./renderCheckpoint.js";
 export async function jsonRequest(url, options, fetchImpl = fetch) {
   let response;
   try {
@@ -85,6 +86,8 @@ export async function renderVideo(
     onProgress = () => {},
     fetchImpl = fetch,
     onJob = () => {},
+    onCheckpoint = () => {},
+    preserveStartedJob = false,
     timeoutMs = 20 * 60 * 1000,
     requestTimeoutMs = 60000,
     pollMs = 1500,
@@ -136,7 +139,7 @@ export async function renderVideo(
       );
     }
   };
-  let job, completedVideo;
+  let job, completedVideo, submitted=false;
   try {
     job = await request("/api/video-jobs", {
       method: "POST",
@@ -146,6 +149,7 @@ export async function renderVideo(
     if (!job || !/^[a-f0-9]{32}$/.test(job.jobId) || !job.token || !job.baseUrl)
       throw Error("渲染任务凭证无效，请检查服务版本。");
     onJob(job);
+    onCheckpoint({phase:"uploading",job,duration:timeline.sourceDuration});
     const base = `${job.baseUrl}/jobs/${job.jobId}`;
     const headers = { Authorization: `Bearer ${job.token}` };
     let count = 0;
@@ -179,6 +183,8 @@ export async function renderVideo(
       });
     }
     // Creating/starting jobs is never retried automatically: an ambiguous response may already have started work.
+    submitted=true;
+    onCheckpoint({phase:"submitted",job,duration:timeline.sourceDuration});
     await request(`${base}/start`, { method: "POST", headers });
     for (;;) {
       checkAbort(combined);
@@ -208,6 +214,7 @@ export async function renderVideo(
           expiresAt: job.expiresAt,
           result: r,
         };
+        onCheckpoint({phase:"download",job,duration:timeline.sourceDuration});
         const file = await request(url, { method: "HEAD" }, true);
         assertVideoHeaders(file);
         return completedVideo;
@@ -240,6 +247,11 @@ export async function renderVideo(
       });
     }
   } catch (error) {
+    const preserve = preserveStartedJob && submitted &&
+      ((!completedVideo && !signal?.aborted && (error.retryable || error.name==="TypeError" || error.name==="TimeoutError" || combined.reason?.name==="TimeoutError")) || signal?.reason?.name==="PageExit");
+    if(preserve){
+      throw Object.assign(Error("渲染连接中断或页面离开，原任务已保留。请恢复原任务进度，不要重复提交渲染。"),{recoverableJob:{phase:completedVideo?"download":"submitted",job,duration:timeline.sourceDuration}});
+    }
     if (job && !completedVideo) await cancelRender(job, { fetchImpl });
     if (completedVideo && !signal?.aborted && !error.terminalDownload) {
       error.recoverableVideo = completedVideo;
@@ -362,4 +374,35 @@ export async function audioDuration(asset, { signal } = {}) {
     }, 20000);
     audio.src = asset.url;
   });
+}
+
+// Read-only recovery: never POST /jobs, upload files or POST /start.
+export async function resumeRenderJob(checkpoint,{fetchImpl=fetch,signal,onProgress=()=>{},pollMs=1500,timeoutMs=20*60*1000}={}) {
+  const saved=cleanRenderCheckpoint(checkpoint), job=saved.job;
+  if(renderExpired(job))throw Object.assign(Error("渲染任务已过期，请放弃此入口后重新导出；原作品保留。"),{terminalJob:true});
+  const scope=abortScope(signal,timeoutMs),base=`${job.baseUrl}/jobs/${job.jobId}`;
+  try {
+    for(;;){
+      checkAbort(scope.signal);
+      const request=abortScope(scope.signal,30000);
+      let state;
+      try {state=await jsonRequest(base,{headers:{Authorization:`Bearer ${job.token}`},signal:request.signal},fetchImpl);}
+      catch(e){if([401,404,410].includes(e.status))e.terminalJob=true;throw e;}
+      finally{request.dispose();}
+      if(state?.state==="complete"){
+        const r=state.result;
+        if(!r || r.videoCodec!=="h264" || r.audioCodec!=="aac" || r.width!==1080 || r.height!==1920 || !Number.isFinite(r.duration) || Math.abs(r.duration-saved.duration)>1/30+.01)throw Object.assign(Error("原任务输出格式或时长验证失败；未标记成功。"),{terminalJob:true});
+        const url=`${base}/video?token=${encodeURIComponent(job.token)}`;
+        return await recoverVideoDownload({url,download:`${url}&download=1`,expiresAt:job.expiresAt,result:r},{fetchImpl,signal:scope.signal});
+      }
+      if(state?.state==="error")throw Object.assign(Error(state.error||"原任务渲染失败，项目保留。"),{terminalJob:true});
+      if(state?.state==="uploading")throw Object.assign(Error("原任务尚未完成上传或启动，无法从刷新后补传；请放弃此入口后重新准备，不会自动启动或重复扣费。"),{terminalJob:true});
+      if(!["queued","rendering"].includes(state?.state))throw Error("原任务状态无效，请检查服务版本。");
+      onProgress({percent:Math.min(99,45+Math.round(Math.max(0,Math.min(100,Number(state.progress)||0))*.55)),message:"正在恢复原FFmpeg任务；没有重新渲染"});
+      await abortable(new Promise(resolve=>setTimeout(resolve,pollMs)),scope.signal);
+    }
+  }catch(e){
+    if(e.name==="TypeError" || e.retryable || e.name==="TimeoutError")throw Error("恢复任务网络失败或超时；原任务入口保留，请恢复网络后继续检查，不要新建任务。");
+    throw e;
+  }finally{scope.dispose();}
 }

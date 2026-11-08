@@ -25,7 +25,7 @@ try {
  await page.getByRole('heading',{name:'10 个候选话题'}).waitFor();assert.equal(calls,1);
  await page.getByRole('button',{name:'选择此话题写文章',exact:true}).nth(1).click();
  assert.match(await page.getByLabel('告诉助手你想做什么').inputValue(),/每天前进一步 2/);
- await page.getByRole('button',{name:'生成完整内容',exact:true}).click();assert.equal(calls,1);
+ assert.equal(calls,1); // Choosing a topic opens the single article-cost review directly.
  await page.getByRole('button',{name:'确认一次付费创作',exact:true}).click();
  await page.getByLabel('英文 10',{exact:true}).waitFor();assert.equal(calls,2);
  let saved=await page.evaluate(()=>JSON.parse(localStorage.getItem('story-studio-v1')));assert.equal(saved.english,original.english);assert.equal(saved.assistant.content.pairs.length,10);
@@ -37,7 +37,10 @@ try {
  await page.getByText('内容已采用并保存。',{exact:false}).waitFor();
  saved=await page.evaluate(()=>JSON.parse(localStorage.getItem('story-studio-v1')));assert.equal(saved.english,target.english);assert.equal(saved.scenes.length,10);assert.equal(saved.scenes[1].chinese,'这是人工审核后的第二句。');assert.ok(saved.scenes.every(s=>s.description));assert.equal(saved.cover.enabled,true);assert.equal(saved.cover.duration,3);assert.ok(saved.character.name);assert.equal(saved.videoTiming,undefined);assert.equal(calls,2);
  const oldBackup=JSON.parse(readFileSync('work/v41-regression/original-backup.json','utf8'));assert.equal(oldBackup.english,original.english);assert.ok(oldBackup.scenes[0].imageRef);
- await page.getByRole('button',{name:'AI 智能制作',exact:true}).click();await page.getByRole('button',{name:'审核并继续未完成的生成',exact:true}).waitFor();assert.equal(calls,2);
+ await page.getByRole('button',{name:'审核并继续未完成的生成',exact:true}).waitFor();assert.equal(calls,2);
+ await page.evaluate(image=>{const key='story-studio-v1',p=JSON.parse(localStorage.getItem(key));p.scenes[0].imageRef=image;localStorage.setItem(key,JSON.stringify(p));},original.scenes[0].imageRef);
+ await page.reload();await page.getByRole('button',{name:/AI 创作助手/}).click();await page.getByRole('button',{name:'制作视频',exact:true}).click();await page.getByRole('button',{name:'审核并继续未完成的生成',exact:true}).waitFor();assert.equal(await page.getByRole('button',{name:'备份原项目并确认采用',exact:true}).count(),0);assert.ok(await page.evaluate(()=>JSON.parse(localStorage.getItem('story-studio-v1')).scenes[0].imageRef));
+
  await page.reload();await page.getByRole('button',{name:/AI 创作助手/}).click();await page.getByRole('button',{name:'AI 智能制作',exact:true}).waitFor();assert.equal(calls,2);
  for(const width of [820,390]){await page.setViewportSize({width,height:1180});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);}
  await page.screenshot({path:'work/v41-regression/assistant.png',fullPage:true});assert.deepEqual(errors,[]);

@@ -109,8 +109,8 @@ export function articleTimeline(text, scenes, asset) {
       const last = positions[cursor - 1];
       return {
         index: i,
-        start: i === 0 ? 0 : a.character_start_times_seconds[first],
-        end: a.character_end_times_seconds[last],
+        start: Math.min(duration,a.character_start_times_seconds[first]),
+        end: Math.min(duration,a.character_end_times_seconds[last]),
       };
     });
     if (
@@ -119,11 +119,13 @@ export function articleTimeline(text, scenes, asset) {
           r.end > r.start && (!i || r.start >= ranges[i - 1].end - 0.01),
       )
     ) {
+      const speechRanges=ranges.map(r=>({...r}));
+      ranges[0].start=0; // Sentence-only audition holds its first image during leading silence.
       ranges.forEach(
         (r, i) =>
           (r.end = i + 1 < ranges.length ? ranges[i + 1].start : duration),
       );
-      return { mode: "aligned", ranges };
+      return { mode: "aligned", ranges, speechRanges };
     }
   }
   const weights = scenes.map((s) =>

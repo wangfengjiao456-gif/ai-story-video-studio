@@ -38,7 +38,7 @@ docker run --rm -p 8000:8000 --env-file /path/to/private-renderer.env story-rend
 3. 单个任务最多 10 分钟、300 PNG 页、100 MP3、200 MB 总上传；单帧最多 10 MB，单 MP3 最多 50 MB。最多保留 10 个任务，单实例一次编码一个任务，繁忙时明确拒绝，不自动重复付费 AI 请求。
 4. 服务校验 PNG 为 1080×1920、实际 MP3 时长与声明基本一致。FFmpeg 强制 MP3 解码、PNG 输入，禁用网络协议；不接受输入 URL 或用户提供的命令行/文件路径。
 5. 按 30fps 帧数合成，H.264 High level 4.0、yuv420p、AAC 48kHz / 192kbps、faststart；每段音频按所测时长补齐尾部，避免多 MP3 编码延迟累积导致切镜漂移。
-6. 视频使用任务 token 直接播放/下载，支持 Range 以便 Safari 拖动；token 是短期任务访问凭证，不是 API Key。页面只在内存保存，不写入项目 JSON/localStorage。
+6. 视频使用任务 token 直接播放/下载，支持 Range 以便 Safari 拖动；token 是短期任务访问凭证，不是 API Key。V4.2在当前标签页sessionStorage保存限时任务入口，不写入项目JSON/localStorage，也不保存API密钥。关闭标签页/服务重启/过期后不能保证恢复。
 7. 一小时后过期任务在后续请求时清理。重启、休眠或域名变更可能使任务失效；及时下载 MP4。取消会终止编码，但上传内容保留到过期清理。
 
 ## 本地验证
@@ -49,7 +49,7 @@ docker run --rm -p 8000:8000 --env-file /path/to/private-renderer.env story-rend
 python3 renderer/test_renderer.py
 ```
 
-测试会真实启动 HTTP 服务，验证鉴权、上传、不可重复启动、H.264/AAC 编码和 Range 下载；不调用 AI。Docker 镜像中已安装 FFmpeg。此实现按单实例个人创作工作室设计，未提供分布式队列、长期云存储、恢复中断任务或多租户账户系统。
+测试会真实启动 HTTP 服务，验证鉴权、上传、不可重复启动、H.264/AAC 编码和 Range 下载；不调用 AI。Docker 镜像中已安装 FFmpeg。此实现按单实例个人创作工作室设计，未提供分布式队列、长期云存储、跨服务重启恢复或多租户账户系统。V4.2浏览器支持同标签页刷新后只读恢复已提交任务；上传未完成仍需明确放弃后重做。
 
 
 ## 当前完整验证

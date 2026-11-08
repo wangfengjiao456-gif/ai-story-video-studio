@@ -24,9 +24,9 @@ function cleanTopics(v) {
   });
 }
 function cleanAssistant(a) {
-  if (!a || !text(a.request, 6e3, true) || !TEMPLATES.includes(a.template) || (a.adopted !== undefined && typeof a.adopted !== "boolean") || (a.mode !== undefined && !["topics","article","full"].includes(a.mode))) throw Error("创作助手输入无效或超过6000字符。");
+  if (!a || !text(a.request, 6e3, true) || !TEMPLATES.includes(a.template) || (a.adoptedSignature !== undefined && !/^adopt:[a-f0-9]{64}$/.test(a.adoptedSignature)) || (a.adopted !== undefined && typeof a.adopted !== "boolean") || (a.mode !== undefined && !["topics","article","full"].includes(a.mode))) throw Error("创作助手输入无效或超过6000字符。");
   return { request: a.request, template: a.template,
-    mode: a.mode || "full", ...a.adopted === true ? { adopted: true } : {}, ...a.topics !== undefined ? { topics: cleanTopics({ topics: a.topics }) } : {}, ...a.content !== undefined ? { content: cleanContent(a.content) } : {} };
+    mode: a.mode || "full", ...(a.adoptedSignature ? {adoptedSignature:a.adoptedSignature}:{}), ...a.adopted === true ? { adopted: true } : {}, ...a.topics !== undefined ? { topics: cleanTopics({ topics: a.topics }) } : {}, ...a.content !== undefined ? { content: cleanContent(a.content) } : {} };
 }
 export {
   CONTENT_SCHEMA,

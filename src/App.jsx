@@ -422,7 +422,7 @@ export default function App() {
           </span>
         </a>
         <div className="workspace-label">
-          创作工作台 <span>V4.1</span>
+          创作工作台 <span>V4.2</span>
         </div>
         <nav>
           {tabs.map(([id, label, Icon], i) => (
@@ -1108,7 +1108,7 @@ export default function App() {
           </div>
         )}
         <footer>
-          用故事连接语言，用创作发现可能。<span>STORY STUDIO / V4.1</span>
+          用故事连接语言，用创作发现可能。<span>STORY STUDIO / V4.2</span>
         </footer>
       </div>
       {message && (

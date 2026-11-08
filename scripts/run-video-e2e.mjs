@@ -89,6 +89,7 @@ try {
   run(process.execPath, ["scripts/verify-video-frames.mjs"]);
   run(process.execPath, ["scripts/browser-creation-v4.mjs"]);
   run(process.execPath, ["scripts/browser-assistant-v41.mjs"]);
+  run(process.execPath, ["scripts/browser-creation-v4.mjs"],{V42_FULL_WORKFLOW:"1"});
   const getConfig = () => ({ url: renderer, key: env.RENDERER_API_KEY });
   const handlers = {
     "/api/service-status": serviceStatus,
