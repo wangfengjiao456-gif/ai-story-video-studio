@@ -105,6 +105,7 @@ export default function useVoiceStudio(
     setStorageWarning("");
     const text = textFor(key).trim(),
       requestedSpeed = speedRef.current,
+      requestedSlot = projectRef.current.scenes.findIndex((s) => s.id === key),
       controller = new AbortController();
     request.current = controller;
     setBusy(key);
@@ -144,7 +145,12 @@ export default function useVoiceStudio(
         key:
           key === "article"
             ? "article"
-            : `scene-${projectRef.current.scenes.findIndex((s) => s.id === key)}`,
+            : `scene-${(() => {
+                const current = projectRef.current.scenes.findIndex(
+                  (s) => s.id === key,
+                );
+                return current < 0 ? requestedSlot : current;
+              })()}`,
         text: asset.text,
         speed: asset.speed,
         fingerprint: asset.fingerprint,
