@@ -1,4 +1,4 @@
-import { voiceMode } from "./creation/voiceRecovery.js";
+import { voiceMode, appendVoiceRecord } from "./creation/voiceRecovery.js";
 import CreationStudio from "./components/CreationStudio.jsx";
 import { SIGNATURE_STYLE } from "./creation/project.js";
 import { verifyProjectImages } from "./services/images.js";
@@ -125,18 +125,7 @@ export default function App() {
     onAssetCreated: (record) =>
       setP((prev) => ({
         ...prev,
-        voiceRecords: [
-          ...(prev.voiceRecords || []).filter(
-            (r) =>
-              !(
-                r.key === record.key &&
-                r.fingerprint === record.fingerprint &&
-                r.text.trim() === record.text.trim() &&
-                r.speed === record.speed
-              ),
-          ),
-          record,
-        ].slice(-100),
+        voiceRecords: appendVoiceRecord(prev.voiceRecords || [], record, prev),
       })),
     onStart: () => {
       videoPause.current?.();

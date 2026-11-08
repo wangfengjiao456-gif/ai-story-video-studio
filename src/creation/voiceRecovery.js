@@ -79,3 +79,29 @@ export function hasMissingVoiceBackup(project, assets, speed, keys) {
       ),
   );
 }
+
+// Keep current scene takes even if one scene is regenerated many times.
+export function appendVoiceRecord(records, record, project, limit = 100) {
+  const all = [
+    ...records.filter(
+      (r) =>
+        !(
+          r.key === record.key &&
+          r.fingerprint === record.fingerprint &&
+          r.text.trim() === record.text.trim() &&
+          r.speed === record.speed
+        ),
+    ),
+    record,
+  ];
+  const chosen = new Set(
+    voiceRecoveryCandidates(project, all, project.aiSpeed ?? record.speed)
+      .slice(0, limit)
+      .map((c) => c.record),
+  );
+  for (const value of [...all].reverse()) {
+    if (chosen.size >= limit) break;
+    chosen.add(value);
+  }
+  return all.filter((value) => chosen.has(value));
+}

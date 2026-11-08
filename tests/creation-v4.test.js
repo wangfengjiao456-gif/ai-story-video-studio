@@ -559,3 +559,53 @@ test("a never-generated repeated sentence is not falsely labelled a lost paid re
     true,
   );
 });
+
+test("many retakes of one scene do not evict the current takes of other scenes", async () => {
+  const { appendVoiceRecord, voiceRecoveryCandidates } = await import(
+    "../src/creation/voiceRecovery.js"
+  );
+  const project = {
+    english: "First. Second. Third.",
+    aiSpeed: 0.8,
+    scenes: [
+      { id: "s0", english: "First." },
+      { id: "s1", english: "Second." },
+      { id: "s2", english: "Third." },
+    ],
+  };
+  let records = [
+    {
+      key: "scene-1",
+      text: "Second.",
+      speed: 0.8,
+      fingerprint: "b".repeat(64),
+    },
+    { key: "scene-2", text: "Third.", speed: 0.8, fingerprint: "c".repeat(64) },
+  ];
+  for (let i = 0; i < 120; i++)
+    records = appendVoiceRecord(
+      records,
+      {
+        key: "scene-0",
+        text: "First.",
+        speed: 0.8,
+        fingerprint: i.toString(16).padStart(64, "0"),
+      },
+      project,
+    );
+  assert.equal(records.length, 100);
+  const result = voiceRecoveryCandidates(project, records, 0.8);
+  assert.equal(result.length, 3);
+  assert.equal(
+    result.find((c) => c.key === "s1").record.fingerprint,
+    "b".repeat(64),
+  );
+  assert.equal(
+    result.find((c) => c.key === "s2").record.fingerprint,
+    "c".repeat(64),
+  );
+  assert.equal(
+    result.find((c) => c.key === "s0").record.fingerprint,
+    (119).toString(16).padStart(64, "0"),
+  );
+});
