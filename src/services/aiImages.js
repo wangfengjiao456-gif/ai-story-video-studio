@@ -27,19 +27,27 @@ export async function generateSceneImage(
     });
   } catch (err) {
     if (err.name === "AbortError") throw err;
-    throw Error("图片生成网络请求失败，请检查网络后手动重试。");
+    throw Error(
+      "图片生成网络请求中断，无法确认服务端是否已生成或计费；不会自动重试，请先检查 OpenAI 用量，避免立即重复生成。",
+    );
   }
   let data;
   try {
     data = await response.json();
   } catch {
-    throw Error("图片服务暂不可用，请使用 Vercel Preview 或 vercel dev。");
+    throw Error(
+      response.status === 429
+        ? "网站或部署平台返回 HTTP 429，未获得 OpenAI 的可识别错误响应。不能确认是 OpenAI 限制；请稍后检查部署日志，不要连续重试。"
+        : `图片服务响应不可读（HTTP ${response.status}），无法确认是否已生成或计费；请检查 Vercel 部署日志，不会自动重试。`,
+    );
   }
   if (!response.ok)
     throw Error(
       typeof data?.error?.message === "string"
         ? data.error.message
-        : "图片生成失败，请手动重试。",
+        : response.status === 429
+          ? "网站或部署平台返回 HTTP 429，未获得 OpenAI 的可识别错误详情；请检查部署日志，不要连续重试。"
+          : "图片生成失败，请检查部署日志后决定是否手动重试。",
     );
   if (!data?.imageRef || data.imageRef.kind !== "generated")
     throw Error("服务未返回有效生成图片。");

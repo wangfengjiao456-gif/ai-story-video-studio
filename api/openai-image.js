@@ -109,33 +109,71 @@ export function createImageHandler({
           "INVALID_FORMAT",
           "图片返回格式异常，原图片未被替换。",
         );
-      return res
-        .status(200)
-        .json({
-          imageRef: {
-            kind: "generated",
-            dataUrl: `data:image/jpeg;base64,${b64}`,
-            model: IMAGE_MODEL,
-            referenceUsed: !!reference,
-          },
-        });
+      return res.status(200).json({
+        imageRef: {
+          kind: "generated",
+          dataUrl: `data:image/jpeg;base64,${b64}`,
+          model: IMAGE_MODEL,
+          referenceUsed: !!reference,
+        },
+      });
     } catch (err) {
-      if (err.code === "insufficient_quota" || err.status === 402)
+      // Classify provider metadata only; never reflect raw messages, headers or keys.
+      const codes = [err.code, err.type, err.error?.code, err.error?.type];
+      const has = (...values) => codes.some((code) => values.includes(code));
+      if (
+        has(
+          "insufficient_quota",
+          "billing_hard_limit_reached",
+          "billing_not_active",
+          "usage_limit_reached",
+        ) ||
+        err.status === 402
+      )
         return fail(
           402,
           "QUOTA",
-          "OpenAI API 额度不足，请检查 API 项目余额和预算。",
+          "OpenAI API 额度或账单限制：请检查此密钥所属项目的 API 余额、预算及账单状态。ChatGPT 订阅不等于 API 额度；仅等待通常不能解决。网站未自动重试。",
         );
       if (err.status === 401)
         return fail(401, "KEY", "OPENAI_API_KEY 无效，请检查服务端密钥。");
-      if (err.status === 403 || err.status === 404)
+      if (
+        err.status === 404 ||
+        has("model_not_found", "invalid_model", "unsupported_model")
+      )
+        return fail(
+          404,
+          "MODEL_UNAVAILABLE",
+          "OpenAI 图片模型不存在或当前项目无权访问该模型。请检查模型权限及组织验证；等待或重复点击通常无效，不会自动更换模型。",
+        );
+      if (err.status === 403)
         return fail(
           403,
           "PERMISSION",
           "图片模型权限不足或模型不可用，请检查项目权限及组织验证。不会自动更换模型。",
         );
-      if (err.status === 429)
-        return fail(429, "RATE", "图片生成请求过于频繁，请稍后重试。");
+      if (err.status === 429) {
+        const retry = err.headers?.get?.("retry-after");
+        const numeric =
+          typeof retry === "string" && /^\d+(?:\.\d+)?$/.test(retry.trim())
+            ? Number(retry)
+            : NaN;
+        const seconds =
+          Number.isFinite(numeric) && numeric > 0 && numeric <= 86400
+            ? Math.ceil(numeric)
+            : null;
+        if (seconds) res.setHeader("Retry-After", String(seconds));
+        const detail = has("rate_limit_exceeded")
+          ? "OpenAI 返回项目或模型速率限制（429）。共享项目的其他请求或低速率配额也可能让首次请求失败，并非判定你重复点击。"
+          : "OpenAI 返回 429，但未提供可识别的限制类型；无法确认是临时速率限制还是账户额度限制，并非网站判定你重复点击。";
+        return fail(
+          429,
+          has("rate_limit_exceeded")
+            ? "OPENAI_RATE_LIMIT"
+            : "OPENAI_429_UNKNOWN",
+          `${detail}${seconds ? `服务建议至少等待 ${seconds} 秒后手动重试。` : "请先检查 OpenAI 项目的 Limits 和 Billing，再决定是否等待后手动重试。"}网站不会自动重试，请勿连续点击。`,
+        );
+      }
       if (err.code === "content_policy_violation" || err.status === 400)
         return fail(
           400,

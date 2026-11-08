@@ -142,9 +142,9 @@ test("有标准形象时用 images.edit，参考图作为 SDK File，不偷偷�
 for (const [status, code, expected, pattern] of [
   [401, "", 401, /无效/],
   [403, "", 403, /权限/],
-  [404, "", 403, /模型/],
-  [429, "insufficient_quota", 402, /额度不足/],
-  [429, "", 429, /频繁/],
+  [404, "", 404, /模型/],
+  [429, "insufficient_quota", 402, /额度或账单/],
+  [429, "", 429, /未提供可识别/],
   [400, "content_policy_violation", 400, /未被接受/],
   [500, "", 502, /生成失败/],
 ])
@@ -342,4 +342,85 @@ test("角色/故事快照变化时签名改变，显示裁切不影响生成输�
   p.character.clothing += " changed";
   assert.notEqual(generationSignature(p, s), signature);
   assert.match(imagePrompt(imageInput(p, s)), /fixed clothing/);
+});
+
+test("首次图片请求区分上游额度、速率与未知429，不泄漏原始错误且只调用一次", async () => {
+  for (const [details, status, code, pattern] of [
+    [
+      { status: 429, error: { type: "insufficient_quota" } },
+      402,
+      "QUOTA",
+      /仅等待通常不能解决/,
+    ],
+    [{ status: 429, code: "billing_hard_limit_reached" }, 402, "QUOTA", /账单/],
+    [
+      {
+        status: 429,
+        code: "rate_limit_exceeded",
+        headers: new Headers({ "retry-after": "12" }),
+      },
+      429,
+      "OPENAI_RATE_LIMIT",
+      /至少等待 12 秒/,
+    ],
+    [
+      {
+        status: 429,
+        headers: new Headers({ "retry-after": "secret-invalid-header" }),
+      },
+      429,
+      "OPENAI_429_UNKNOWN",
+      /无法确认/,
+    ],
+    [
+      { status: 400, code: "model_not_found" },
+      404,
+      "MODEL_UNAVAILABLE",
+      /模型/,
+    ],
+  ]) {
+    let calls = 0;
+    const r = res();
+    await createImageHandler({
+      getKey: () => "private-test-key",
+      createClient: () => ({
+        images: {
+          generate: async () => {
+            calls++;
+            throw Object.assign(
+              Error("private-test-key raw provider detail"),
+              details,
+            );
+          },
+        },
+      }),
+    })(req(), r);
+    assert.equal(calls, 1);
+    assert.equal(r.statusCode, status);
+    assert.equal(r.body.error.code, code);
+    assert.match(r.body.error.message, pattern);
+    assert.ok(!JSON.stringify(r).includes("private-test-key"));
+    assert.ok(!JSON.stringify(r).includes("secret-invalid-header"));
+    if (code === "OPENAI_RATE_LIMIT")
+      assert.equal(r.headers["Retry-After"], "12");
+  }
+});
+test("非OpenAI的部署平台429不冒充上游速率限制，前端不重试", async () => {
+  const p = project();
+  for (const response of [
+    () => new Response("platform rate limit", { status: 429 }),
+    () => Response.json({}, { status: 429 }),
+  ]) {
+    let calls = 0;
+    await assert.rejects(
+      generateSceneImage(p, p.scenes[0], {
+        fetchImpl: async () => {
+          calls++;
+          return response();
+        },
+      }),
+      /网站或部署平台/,
+    );
+    assert.equal(calls, 1);
+  }
 });
