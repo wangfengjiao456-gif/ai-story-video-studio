@@ -1,3 +1,5 @@
+import MusicSettings from "./MusicSettings.jsx";
+import { mixKey, mixVideoAudio } from "../creation/audioMix.js";
 import { parseTimingDraft } from "../video/timingDraft.js";
 import { isFresh } from "../services/aiVoice.js";
 import {
@@ -26,6 +28,8 @@ export default function VideoStudioPanel({
   project,
   ai,
   onTimingChange,
+  onProjectChange = () => {},
+  autoPrepareRequest,
   onStart,
   onFrame,
   hidden,
@@ -36,6 +40,14 @@ export default function VideoStudioPanel({
 }) {
   const [rendererReady, setRendererReady] = useState(false),
     [checkingRenderer, setCheckingRenderer] = useState(false);
+  const [musicAsset, setMusicAsset] = useState(null);
+  const mixedUrls = useRef(new Set());
+  useEffect(
+    () => () => {
+      for (const url of mixedUrls.current) URL.revokeObjectURL(url);
+    },
+    [],
+  );
   const [aligning, setAligning] = useState(false),
     [confirmAlign, setConfirmAlign] = useState(false),
     [draft, setDraft] = useState([]),
@@ -93,6 +105,10 @@ export default function VideoStudioPanel({
   const preparationContext = useRef(null);
   const preparationKey = JSON.stringify([
     source,
+    project.cover?.enabled,
+    project.cover?.duration,
+    JSON.stringify(project.music),
+    musicAsset?.id,
     inputContext.current,
     imported?.fingerprint,
     project.scenes.map((s) => s.id),
@@ -118,22 +134,31 @@ export default function VideoStudioPanel({
   const { timeline, timingError } = useMemo(() => {
     try {
       assertPreparedAudio(prepared, ai.assets, ai.speed, source === "imported");
-      return {
-        timeline: prepared
-          ? buildVideoTimeline(
-              project,
-              prepared.assets,
-              prepared.speed,
-              prepared.source,
-              measure,
-            )
-          : null,
-        timingError: "",
-      };
+      const result = prepared
+        ? buildVideoTimeline(
+            project,
+            prepared.assets,
+            prepared.speed,
+            prepared.source,
+            measure,
+            prepared.mixed,
+          )
+        : null;
+      if (
+        result &&
+        (result.requiresMix ||
+          (prepared.mixed &&
+            prepared.mixKey !==
+              mixKey(project, result.originalAudios, musicAsset)))
+      )
+        throw Error(
+          "封面时长、音乐或校准时间已变化，请点击“准备完整视频”重新进行本地混音，不会调用付费API。",
+        );
+      return { timeline: result, timingError: "" };
     } catch (err) {
       return { timeline: null, timingError: err.message };
     }
-  }, [project, prepared, measure, ai.assets, ai.speed, source]);
+  }, [project, prepared, measure, ai.assets, ai.speed, source, musicAsset]);
   const loadImage = useMemo(() => {
     const cache = new Map();
     return (src) => {
@@ -272,7 +297,7 @@ export default function VideoStudioPanel({
         const range = timelineRef.current?.ranges[index];
         if (range) {
           pause();
-          seek(range.start, false);
+          seek(range.start + (timelineRef.current?.coverDuration || 0), false);
         }
       },
       toggle() {
@@ -388,6 +413,20 @@ export default function VideoStudioPanel({
       setAligning(false);
     }
   }
+  const handledAutoPrepare = useRef(null);
+  useEffect(() => {
+    if (
+      !autoPrepareRequest ||
+      handledAutoPrepare.current === autoPrepareRequest.id
+    )
+      return;
+    if (source !== autoPrepareRequest.source) {
+      setSource(autoPrepareRequest.source);
+      return;
+    }
+    handledAutoPrepare.current = autoPrepareRequest.id;
+    prepare();
+  }, [autoPrepareRequest, source]);
   async function prepare() {
     if (preparing || prepareController.current || draftDirty) return;
     const request = new AbortController();
@@ -430,10 +469,31 @@ export default function VideoStudioPanel({
       resetTimingDraft(
         preparedTimeline.ranges.map((r) => ({
           start: r.start,
-          end: Math.min(r.end, preparedTimeline.sourceDuration),
+          end: Math.min(r.end, preparedTimeline.narrationDuration),
         })),
       );
-      setPrepared({ assets, speed: ai.speed, source: mode });
+      let mixed;
+      if (preparedTimeline.requiresMix) {
+        mixed = await mixVideoAudio(project, preparedTimeline, musicAsset, {
+          signal: request.signal,
+        });
+        if (epoch !== prepareEpoch.current) {
+          URL.revokeObjectURL(mixed.url);
+          return;
+        }
+        mixedUrls.current.add(mixed.url);
+      }
+      if (prepared?.mixed) {
+        URL.revokeObjectURL(prepared.mixed.url);
+        mixedUrls.current.delete(prepared.mixed.url);
+      }
+      setPrepared({
+        assets,
+        speed: ai.speed,
+        source: mode,
+        mixed,
+        mixKey: mixKey(project, preparedTimeline.originalAudios, musicAsset),
+      });
       resetPlaybackClock();
     } catch (err) {
       if (epoch === prepareEpoch.current && err.name !== "AbortError")
@@ -500,6 +560,7 @@ export default function VideoStudioPanel({
       if (importedUrl.current) URL.revokeObjectURL(importedUrl.current);
       importedUrl.current = url;
       setImported(asset);
+      ai.restoreArticle?.(asset);
       const signature = timingSignature(
         project,
         { article: asset },
@@ -600,7 +661,16 @@ export default function VideoStudioPanel({
     setError("");
     setRendererReady(false);
     try {
-      await jsonRequest("/api/renderer-status", { method: "POST" });
+      const status = await jsonRequest("/api/renderer-status", {
+        method: "POST",
+      });
+      if (
+        (project.cover?.enabled || project.music?.enabled) &&
+        status.capabilities?.pcmWav !== true
+      )
+        throw Error(
+          "当前Render版本不支持V4封面/音乐混音，请先部署feat/story-studio-v4的renderer代码。",
+        );
       setRendererReady(true);
     } catch (e) {
       setError(e.message);
@@ -743,7 +813,7 @@ export default function VideoStudioPanel({
       const cues = parseTimingDraft(
         draft,
         project.scenes.length,
-        source === "imported" ? imported.duration : timeline.sourceDuration,
+        source === "imported" ? imported.duration : timeline.narrationDuration,
       );
       if (source === "imported") saveCues(cues);
       else {
@@ -776,13 +846,34 @@ export default function VideoStudioPanel({
         </div>
       </div>
       <ServiceStatus />
+      {(source === "imported" ? imported : ai.assets.article)?.url &&
+        source !== "scenes" && (
+          <a
+            href={(source === "imported" ? imported : ai.assets.article).url}
+            download="story-narration.mp3"
+          >
+            下载原始旁白 MP3 备份（不含音乐与封面）
+          </a>
+        )}
+      <MusicSettings
+        settings={project.music}
+        asset={musicAsset}
+        onUpload={(asset) => {
+          pause();
+          setMusicAsset(asset);
+        }}
+        onChange={(music) => {
+          pause();
+          onProjectChange({ music });
+        }}
+      />
       <p>
         <a
-          href="https://github.com/wangfengjiao456-gif/ai-story-video-studio/blob/feat/story-studio-v3-1/IPAD_GUIDE.md"
+          href="https://github.com/wangfengjiao456-gif/ai-story-video-studio/blob/feat/story-studio-v4/V4_GUIDE.md"
           target="_blank"
           rel="noreferrer"
         >
-          iPad 操作与首次配置指南
+          V4 iPad 操作与首次配置指南
         </a>
       </p>
       <div className="note">
@@ -911,7 +1002,8 @@ export default function VideoStudioPanel({
         每镜必须已有图片和对应文字。生成新音频后请重新准备。预览和导出使用准备时音频快照，字幕样式和图片使用当前配置；导出开始后是固定快照。
       </p>
       <p className="muted">
-        项目 JSON 包含文章、分镜、图片和时间轴，不包含 MP3。请另行保留 MP3
+        项目 JSON 包含文章、分镜、封面、图片、音乐设置和时间轴，不包含
+        MP3。成功生成的配音可尝试从同网址本机媒体备份免费恢复，仍请另行保留 MP3
         原文件；刷新后重新导入同一文件可恢复对齐。浏览器本地存档最多 5
         MB；较大项目可导出最多 50 MB 的 JSON
         文件并重新导入。保存失败不会覆盖旧存档，刷新前请先完成文件备份。
@@ -988,7 +1080,9 @@ export default function VideoStudioPanel({
             </p>
           )}
           <div className="ai-actions">
-            <button onClick={() => seek(0, true)}>从第 1 镜重播</button>
+            <button onClick={() => seek(0, true)}>
+              {timeline.coverDuration ? "从封面00重播" : "从第 1 镜重播"}
+            </button>
             <button
               onClick={() =>
                 playing
@@ -1027,7 +1121,7 @@ export default function VideoStudioPanel({
                       disabled={aligning}
                       type="number"
                       min="0"
-                      max={timeline.sourceDuration}
+                      max={timeline.narrationDuration}
                       step="0.01"
                       value={draft[i]?.[field] ?? range[field]}
                       onChange={(e) => editTiming(i, field, e.target.value)}

@@ -17,6 +17,9 @@
     },
     "api/video-jobs.js": {
       "maxDuration": 60
+    },
+    "api/plan-story.js": {
+      "maxDuration": 120
     }
   }
 }

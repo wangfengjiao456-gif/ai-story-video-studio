@@ -1,3 +1,8 @@
+import {
+  SIGNATURE_STYLE,
+  validateCreation,
+  creationRecord,
+} from "./creation/project.js";
 import { DEFAULT_SPEED, MIN_SPEED, MAX_SPEED } from "./voiceConfig.js";
 import { validateCues } from "./video/alignment.js";
 import {
@@ -50,7 +55,7 @@ export const initialProject = () => ({
     appearance: "棕色短发，明亮的眼睛，充满好奇心的女孩",
     clothing: "米色外套，深绿色背包",
   },
-  style: "绘本水彩",
+  style: SIGNATURE_STYLE,
   ratio: "9:16",
   rate: 0.9,
   aiSpeed: DEFAULT_SPEED,
@@ -80,7 +85,9 @@ export function validateProject(p, { recovery = false } = {}) {
     !p.character ||
     !Array.isArray(p.scenes) ||
     p.scenes.length > 500 ||
-    !["绘本水彩", "电影质感", "温暖插画", "极简剪纸"].includes(p.style) ||
+    ![SIGNATURE_STYLE, "绘本水彩", "电影质感", "温暖插画", "极简剪纸"].includes(
+      p.style,
+    ) ||
     !["9:16", "16:9", "4:5"].includes(p.ratio) ||
     !["en", "zh", "both"].includes(p.subtitles) ||
     !Number.isFinite(p.rate) ||
@@ -145,6 +152,7 @@ export function validateProject(p, { recovery = false } = {}) {
       throw Error("手动视频时间轴无效。");
   }
   validatePresentation(p);
+  validateCreation(p);
   for (const scene of p.scenes) validateImageRef(scene.imageRef);
   validateImageRef(p.character.referenceImage);
   return p;
@@ -169,6 +177,7 @@ export function serializeProject(
   } = project;
   const raw = JSON.stringify({
     ...presentationRecord(project),
+    ...creationRecord(project),
     aiSpeed: project.aiSpeed ?? DEFAULT_SPEED,
     ...(project.videoTiming
       ? {

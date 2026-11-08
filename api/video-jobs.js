@@ -42,6 +42,33 @@ export function createVideoJobHandler({
         return fail(400, "视频任务必须是 JSON 对象，项目未修改。");
       if (Buffer.byteLength(JSON.stringify(body)) > 100000)
         return fail(400, "视频任务过大，请减少字幕分页。");
+      const needsWav =
+        Array.isArray(body.audios) &&
+        body.audios.some((a) => a?.encoding === "wav");
+      if (needsWav) {
+        const check = await fetchImpl(new URL("/check", base), {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${key}`,
+          },
+          body: JSON.stringify({ origin: req.headers.origin }),
+          signal: AbortSignal.timeout(15000),
+        });
+        const capability = await check.json();
+        if (!check.ok)
+          return fail(
+            check.status,
+            typeof capability.error === "string"
+              ? capability.error
+              : "渲染服务连接检查失败。",
+          );
+        if (capability.capabilities?.pcmWav !== true)
+          return fail(
+            503,
+            "当前Render版本不支持V4封面/背景音乐混音，请部署feat/story-studio-v4最新renderer；原项目未修改。",
+          );
+      }
       const response = await fetchImpl(new URL("/jobs", base), {
         method: "POST",
         headers: {
@@ -49,7 +76,7 @@ export function createVideoJobHandler({
           Authorization: `Bearer ${key}`,
         },
         body: JSON.stringify({ ...body, origin: req.headers.origin }),
-        signal: AbortSignal.timeout(45000),
+        signal: AbortSignal.timeout(needsWav ? 30000 : 45000),
       });
       const result = await response.json();
       if (!response.ok)

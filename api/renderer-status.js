@@ -53,7 +53,14 @@ export function createRendererStatus({
               : "渲染服务检查失败。",
         );
       if (body.ok !== true) return fail(502, "渲染服务响应异常。");
-      return res.status(200).json({ ok: true });
+      return res
+        .status(200)
+        .json({
+          ok: true,
+          ...(body.capabilities
+            ? { capabilities: { pcmWav: body.capabilities.pcmWav === true } }
+            : {}),
+        });
     } catch {
       return fail(
         502,

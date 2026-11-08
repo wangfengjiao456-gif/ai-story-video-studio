@@ -1,4 +1,6 @@
-# AI Story Video Studio V3.1
+# AI Story Video Studio V4.0
+
+V4 增量功能与最新保存/部署说明见 [V4_GUIDE.md](V4_GUIDE.md)：智能规划、封面00、默认画风、分阶段付费确认、本机媒体恢复及同轨音乐混音。下面保留 V1–V3.1 历史说明；音频备份范围以 V4 指南为准。
 
 iPad 使用者请阅读 [简体中文操作指南](IPAD_GUIDE.md)，包含备份、Render/Vercel 配置和第一次 MP4 导出。
 
@@ -233,7 +235,7 @@ npm run build
 
 仅新增 **`OPENAI_API_KEY`**。不要修改现有 `ELEVENLABS_API_KEY`。
 
-1. Vercel → 项目 → Settings → Environment Variables，添加 OPENAI_API_KEY，先仅选 **Preview**，可限定 `feat/story-studio-v3-1` 分支。不要使用 VITE_ 前缀。
+1. Vercel → 项目 → Settings → Environment Variables，添加 OPENAI*API_KEY，先仅选 **Preview**，可限定 `feat/story-studio-v3-1` 分支。不要使用 VITE* 前缀。
 2. 打开本 PR 的 Vercel Preview，或在 Deployments 中选择该分支；变量新增后由项目所有者重新部署 Preview。没有 Key 时仍能测试画幅、字幕、PNG 导出和图片上传。
 3. 先在真实 Preview 手动确认单张生成、带人物参考图生成、下载、保存刷新、已有 MP3 播放及 iPad Safari 触控/字体/PNG 下载；检查账单与模型权限。当前自动化都是模拟 SDK/音频，不代表真实图片成功。
 4. **真实 API 与 iPad 验收未完成前不部署 Production。**后续验收通过并批准发布时，再为 Production 设置 OPENAI_API_KEY，使用已验证提交部署；保留原 ElevenLabs 密钥。本次不合并分支、不操作 Production。
@@ -248,7 +250,7 @@ npm run build
 
 ElevenLabs 服务端和固定配置与成功使用的 V2 保持一致，仍只读取服务器 `ELEVENLABS_API_KEY`；没有将旧分支的 Key 复制进代码。新增 `GET /api/service-status`，只返回当前分支、环境和三个服务是否配置的布尔值。到“AI 配音”或“视频预览与导出”点击“检查当前分支配置”。
 
-如果显示 V3.1 Preview 未配置，请在 Vercel → Settings → Environment Variables 将原变量范围覆盖 **feat/story-studio-v3-1** 或全部 Preview，并重新部署当前 Preview；此前仅作用于 feat/elevenlabs-v2 的变量不会继承。不添加 VITE_ 前缀，不修改 Production Key。这里没有 Vercel 账户环境变量管理权限，不能声称已经代你修好变量范围。
+如果显示 V3.1 Preview 未配置，请在 Vercel → Settings → Environment Variables 将原变量范围覆盖 **feat/story-studio-v3-1** 或全部 Preview，并重新部署当前 Preview；此前仅作用于 feat/elevenlabs-v2 的变量不会继承。不添加 VITE\_ 前缀，不修改 Production Key。这里没有 Vercel 账户环境变量管理权限，不能声称已经代你修好变量范围。
 
 插画按钮先验证当前分镜输入并检查当前部署 OpenAI 配置，再显示一次页内费用确认；确认立即锁定请求，双击不会重复生成。生成中、对应分镜的错误原因就地显示，失败保留旧图，不会自动重试或批量消耗额度。
 

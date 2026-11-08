@@ -91,6 +91,7 @@ export async function renderVideo(
     readRetryMs = 300,
   } = {},
 ) {
+  if (timeline.requiresMix) throw Error("请先准备封面与音乐混音，再导出。");
   if (timeline.precision === "estimated")
     throw Error("估算时轴不能导出，请先完成真实对齐或逐句手动确认。");
   const deadline = abortScope(signal, timeoutMs),
@@ -164,11 +165,14 @@ export async function renderVideo(
       });
     }
     for (let i = 0; i < timeline.audios.length; i++) {
-      await request(`${base}/audio-${i}.mp3`, {
-        method: "PUT",
-        headers,
-        body: timeline.audios[i].blob,
-      });
+      await request(
+        `${base}/audio-${i}.${timeline.audios[i].encoding === "wav" ? "wav" : "mp3"}`,
+        {
+          method: "PUT",
+          headers,
+          body: timeline.audios[i].blob,
+        },
+      );
       onProgress({
         percent: Math.round((++count / total) * 45),
         message: `上传音频 ${i + 1}/${timeline.audios.length}`,

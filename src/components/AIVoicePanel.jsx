@@ -96,6 +96,16 @@ export default function AIVoicePanel({ project, studio, hidden }) {
           <p>使用固定声音生成真实 MP3，适合英语跟读练习。</p>
         </div>
       </div>
+      {studio.restoreCached && (
+        <button disabled={!!busy} onClick={() => studio.restoreCached()}>
+          恢复本机配音备份（免费）
+        </button>
+      )}
+      {studio.storageWarning && (
+        <p role="alert" className="validation-error">
+          配音已生成，但{studio.storageWarning}
+        </p>
+      )}
       <div className="voice-config">
         <span>
           声音 Voice ID <code>{VOICE_ID}</code>

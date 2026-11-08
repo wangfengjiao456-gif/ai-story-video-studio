@@ -1,3 +1,8 @@
+import {
+  writeMedia,
+  readMedia,
+  cachedVoiceRecord,
+} from "../creation/mediaStore.js";
 import { audioFingerprint } from "../video/audioIdentity.js";
 import { useEffect, useRef, useState } from "react";
 import { DEFAULT_SPEED } from "../voiceConfig.js";
@@ -9,26 +14,28 @@ import {
 } from "../services/aiVoice.js";
 export default function useVoiceStudio(
   project,
-  { onStart, onFrame, onSpeedChange },
+  { onStart, onFrame, onSpeedChange, onAssetCreated },
 ) {
   const [speed, updateSpeed] = useState(project.aiSpeed ?? DEFAULT_SPEED),
     [assets, setAssets] = useState({}),
     [busy, setBusy] = useState(null),
     [error, setError] = useState(""),
+    [storageWarning, setStorageWarning] = useState(""),
     [selected, setSelected] = useState(null),
     [playing, setPlaying] = useState(false);
   const audioRef = useRef(null),
     assetsRef = useRef({}),
     projectRef = useRef(project),
-    callbacks = useRef({ onStart, onFrame, onSpeedChange }),
+    callbacks = useRef({ onStart, onFrame, onSpeedChange, onAssetCreated }),
     request = useRef(null),
     sequence = useRef(null),
     selectedRef = useRef(null),
     speedRef = useRef(speed),
     raf = useRef(null),
-    playEpoch = useRef(0);
+    playEpoch = useRef(0),
+    lifecycleEpoch = useRef(0);
   projectRef.current = project;
-  callbacks.current = { onStart, onFrame, onSpeedChange };
+  callbacks.current = { onStart, onFrame, onSpeedChange, onAssetCreated };
   speedRef.current = speed;
   assetsRef.current = assets;
   selectedRef.current = selected;
@@ -49,6 +56,8 @@ export default function useVoiceStudio(
     setPlaying(false);
   }
   function release() {
+    lifecycleEpoch.current++;
+    setStorageWarning("");
     request.current?.abort();
     request.current = null;
     sequence.current = null;
@@ -68,6 +77,7 @@ export default function useVoiceStudio(
   }
   useEffect(
     () => () => {
+      lifecycleEpoch.current++;
       request.current?.abort();
       cancelAnimationFrame(raf.current);
       for (const a of Object.values(assetsRef.current))
@@ -90,6 +100,7 @@ export default function useVoiceStudio(
     pause();
     sequence.current = null;
     setError("");
+    setStorageWarning("");
     const text = textFor(key).trim(),
       requestedSpeed = speedRef.current,
       controller = new AbortController();
@@ -109,6 +120,17 @@ export default function useVoiceStudio(
         speed: requestedSpeed,
         duration: null,
       };
+      let mediaSaved = true;
+      try {
+        await writeMedia(`voice:${fingerprint}`, cachedVoiceRecord(asset));
+      } catch (error) {
+        mediaSaved = false;
+        setStorageWarning(error.message);
+      }
+      if (controller.signal.aborted || request.current !== controller) {
+        URL.revokeObjectURL(asset.url);
+        return;
+      }
       const old = assetsRef.current[key];
       const next = { ...assetsRef.current, [key]: asset };
       assetsRef.current = next;
@@ -116,14 +138,100 @@ export default function useVoiceStudio(
       setSelected(key);
       selectedRef.current = key;
       if (old) URL.revokeObjectURL(old.url);
+      callbacks.current.onAssetCreated?.({
+        key:
+          key === "article"
+            ? "article"
+            : `scene-${projectRef.current.scenes.findIndex((s) => s.id === key)}`,
+        text: asset.text,
+        speed: asset.speed,
+        fingerprint: asset.fingerprint,
+      });
+      return { ...asset, mediaSaved };
     } catch (err) {
       if (err.name !== "AbortError") setError(err.message);
+      return {
+        failed: true,
+        error: err.message || "生成未完成，请检查后再手动继续。",
+      };
     } finally {
       if (request.current === controller) {
         request.current = null;
         setBusy(null);
       }
     }
+  }
+  async function restoreCached() {
+    const p = projectRef.current,
+      speed = speedRef.current,
+      epoch = lifecycleEpoch.current;
+    let count = 0;
+    for (const record of p.voiceRecords || []) {
+      if (record.speed !== speed) continue;
+      const key =
+        record.text.trim() === p.english.trim()
+          ? "article"
+          : p.scenes.find((s) => s.english.trim() === record.text.trim())?.id;
+      if (!key || isFresh(assetsRef.current[key], textFor(key), speed))
+        continue;
+      let value;
+      try {
+        value = await readMedia(`voice:${record.fingerprint}`);
+      } catch (error) {
+        setStorageWarning(error.message);
+        continue;
+      }
+      if (epoch !== lifecycleEpoch.current) return count;
+      if (
+        !(value?.blob instanceof Blob) ||
+        value.kind !== "voice" ||
+        value.fingerprint !== record.fingerprint ||
+        value.text !== record.text ||
+        value.speed !== speed ||
+        textFor(key).trim() !== record.text.trim() ||
+        speedRef.current !== speed ||
+        isFresh(assetsRef.current[key], textFor(key), speed)
+      )
+        continue;
+      if ((await audioFingerprint(value.blob)) !== record.fingerprint) {
+        setStorageWarning("本机配音备份校验失败，请重新导入原MP3。");
+        continue;
+      }
+      if (
+        epoch !== lifecycleEpoch.current ||
+        textFor(key).trim() !== record.text.trim() ||
+        speedRef.current !== speed
+      )
+        return count;
+      const old = assetsRef.current[key];
+      assetsRef.current = {
+        ...assetsRef.current,
+        [key]: {
+          ...value,
+          url: URL.createObjectURL(value.blob),
+          duration: null,
+        },
+      };
+      setAssets(assetsRef.current);
+      if (old) URL.revokeObjectURL(old.url);
+      count++;
+    }
+    return count;
+  }
+  function restoreArticle(asset) {
+    if (
+      !asset?.external ||
+      !asset.blob ||
+      !asset.fingerprint ||
+      !isFresh(asset, projectRef.current.english, speedRef.current)
+    )
+      return;
+    pause();
+    const value = { ...asset, url: URL.createObjectURL(asset.blob) };
+    const old = assetsRef.current.article;
+    assetsRef.current = { ...assetsRef.current, article: value };
+    setAssets(assetsRef.current);
+    if (old) URL.revokeObjectURL(old.url);
   }
   function frame() {
     const key = selectedRef.current,
@@ -256,6 +364,9 @@ export default function useVoiceStudio(
     playing,
     audioRef,
     generate,
+    restoreArticle,
+    restoreCached,
+    storageWarning,
     pause,
     reset: release,
     start,

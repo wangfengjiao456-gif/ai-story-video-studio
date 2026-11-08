@@ -34,7 +34,11 @@ export default [
     languageOptions: { globals: globals.node },
   },
   {
-    files: ["tests/**/*.js", "scripts/browser-video-regression.mjs"],
+    files: [
+      "tests/**/*.js",
+      "scripts/browser-video-regression.mjs",
+      "scripts/browser-creation-v4.mjs",
+    ],
     languageOptions: { globals: { ...globals.browser, ...globals.node } },
   },
 ];

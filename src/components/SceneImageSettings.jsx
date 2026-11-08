@@ -181,6 +181,25 @@ export default function SceneImageSettings({
           <button onClick={() => setConfirm(false)}>取消</button>
         </section>
       )}
+      {generation?.restoreScene && (
+        <button
+          disabled={!!generation.busy || !!generation.pending}
+          onClick={async () => {
+            setError("");
+            if (!(await generation.restoreScene(s.id, true)))
+              setError(
+                "未找到与当前提示词对应的本机生成备份，可手动上传或确认新生成。",
+              );
+          }}
+        >
+          恢复本机生成备份（免费）
+        </button>
+      )}
+      {generation?.target === s.id && generation.storageWarning && (
+        <p role="alert" className="validation-error">
+          图片已生成，但{generation.storageWarning} 本机备份不是云端存储。
+        </p>
+      )}
       {generation?.target === s.id && generation.error && (
         <p role="alert" className="validation-error">
           {generation.error}

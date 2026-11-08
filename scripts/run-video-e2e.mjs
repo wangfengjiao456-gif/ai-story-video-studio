@@ -87,6 +87,7 @@ try {
   const [code] = await once(browser, "exit");
   if (code !== 0) throw Error("浏览器回归失败：请检查 work/e2e/browser.log");
   run(process.execPath, ["scripts/verify-video-frames.mjs"]);
+  run(process.execPath, ["scripts/browser-creation-v4.mjs"]);
   const getConfig = () => ({ url: renderer, key: env.RENDERER_API_KEY });
   const handlers = {
     "/api/service-status": serviceStatus,

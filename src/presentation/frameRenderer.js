@@ -2,6 +2,32 @@ import { normalizePresentation, safeTextColor } from "./settings.js";
 import { frameGeometry, subtitlePages } from "./layout.js";
 export const FONT_STACK = 'Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
 export function framePlan(project, scene, measure) {
+  if (scene?.isCover) {
+    const titleProject = {
+      ...project,
+      videoTemplate: "picturebook",
+      subtitles: "both",
+      subtitlePosition: 12,
+      subtitleStyle: {
+        ...project.subtitleStyle,
+        englishSize: 44,
+        chineseSize: 76,
+        height: 36,
+        align: "center",
+        backgroundColor: "#fff8ec",
+        opacity: 1,
+        englishColor: "#405446",
+        chineseColor: "#173e2e",
+      },
+    };
+    const result = framePlan(
+      titleProject,
+      { ...scene, isCover: false },
+      measure,
+    );
+    result.isCover = true;
+    return result;
+  }
   const p = normalizePresentation(project),
     style = p.subtitleStyle,
     geometry = frameGeometry(style, p.subtitlePosition, p.ratio),
@@ -193,6 +219,22 @@ export function paintFrame(ctx, plan, pageIndex, image) {
     ctx.shadowBlur = 0;
     ctx.shadowOffsetY = 0;
   };
+  if (plan.isCover) {
+    draw(
+      page.chinese,
+      layout.chineseSize,
+      s.chineseLineHeight,
+      plan.chineseColor,
+    );
+    if (page.english.length && page.chinese.length) y += s.gap;
+    draw(
+      page.english,
+      layout.englishSize,
+      s.englishLineHeight,
+      plan.englishColor,
+    );
+    return;
+  }
   draw(
     page.english,
     layout.englishSize,

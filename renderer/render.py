@@ -16,6 +16,7 @@ def validate_manifest(m):
     if total/FPS>MAX_DURATION: raise ValueError('单个视频最多 10 分钟。')
     for a in audios:
         d=a.get('duration') if isinstance(a,dict) else None
+        if not isinstance(a,dict) or a.get('encoding','mp3') not in ['mp3','wav']:raise ValueError('音频编码必须是 MP3 或 WAV。')
         if isinstance(d,bool) or not isinstance(d,(int,float)) or not math.isfinite(d) or d<=0 or d>MAX_DURATION: raise ValueError('真实音频时长无效。')
     if abs(sum(a['duration'] for a in audios)-total/FPS)>.1: raise ValueError('音频与视频总时长不一致。')
     return m
@@ -57,8 +58,9 @@ def render(directory,manifest,progress=lambda n:None,cancelled=lambda:False,proc
     actual_durations=[];declared_elapsed=0;actual_elapsed=0
     for i in range(len(manifest['frames'])):check_png(directory/f'frame-{i}.png')
     for i,a in enumerate(manifest['audios']):
-        info=probe(directory/f'audio-{i}.mp3',True,timeout=min(30,remaining()))
-        if not any(s.get('codec_type')=='audio' and s.get('codec_name')=='mp3' for s in info['streams']):raise ValueError('仅支持真实 MP3 音频。')
+        encoding=a.get('encoding','mp3')
+        info=probe(directory/f'audio-{i}.{encoding}',encoding=='mp3',timeout=min(30,remaining()))
+        if not any(s.get('codec_type')=='audio' and s.get('codec_name')==('mp3' if encoding=='mp3' else 'pcm_s16le') for s in info['streams']):raise ValueError('音频不是有效MP3或16位PCM WAV。')
         actual=float(info['format']['duration']);actual_durations.append(actual)
         declared_elapsed+=a['duration'];actual_elapsed+=actual
         if abs(actual-a['duration'])>1/FPS or abs(actual_elapsed-declared_elapsed)>1/FPS:
@@ -71,7 +73,8 @@ def render(directory,manifest,progress=lambda n:None,cancelled=lambda:False,proc
     lines += [f"file 'frame-{len(manifest['frames'])-1}.png'", "option framerate 30"]
     (directory/'frames.txt').write_text('\n'.join(lines)+'\n')
     cmd=['ffmpeg','-hide_banner','-loglevel','error','-y','-threads','2','-protocol_whitelist','file,pipe','-f','concat','-safe','0','-c:v','png','-i',str(directory/'frames.txt')]
-    for i in range(len(manifest['audios'])):cmd+=['-protocol_whitelist','file,pipe','-f','mp3','-i',str(directory/f'audio-{i}.mp3')]
+    for i,a in enumerate(manifest['audios']):
+        encoding=a.get('encoding','mp3');cmd+=['-protocol_whitelist','file,pipe','-f',encoding,'-i',str(directory/f'audio-{i}.{encoding}')]
     parts=[f"[{i+1}:a]aresample=48000,asetpts=PTS-STARTPTS[a{i}]" for i,a in enumerate(manifest['audios'])]
     parts+=[''.join(f'[a{i}]' for i in range(len(manifest['audios'])))+f"concat=n={len(manifest['audios'])}:v=0:a=1[audio]"]
     cmd+=['-filter_complex_threads','1','-filter_complex',';'.join(parts),'-map','0:v:0','-map','[audio]','-vf','fps=fps=30:round=near','-r',str(FPS),'-c:v','libx264','-preset','veryfast','-crf','20','-profile:v','high','-level','4.0','-pix_fmt','yuv420p','-threads','2','-c:a','aac','-b:a','192k','-ar','48000','-ac','2','-t',str(total),'-movflags','+faststart','-progress','pipe:1','-nostats',str(directory/'video.mp4')]
