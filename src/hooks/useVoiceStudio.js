@@ -1,7 +1,9 @@
+import { voiceRecoveryCandidates } from "../creation/voiceRecovery.js";
 import {
   writeMedia,
   readMedia,
   cachedVoiceRecord,
+  voiceCacheKey,
 } from "../creation/mediaStore.js";
 import { audioFingerprint } from "../video/audioIdentity.js";
 import { useEffect, useRef, useState } from "react";
@@ -122,7 +124,7 @@ export default function useVoiceStudio(
       };
       let mediaSaved = true;
       try {
-        await writeMedia(`voice:${fingerprint}`, cachedVoiceRecord(asset));
+        await writeMedia(await voiceCacheKey(asset), cachedVoiceRecord(asset));
       } catch (error) {
         mediaSaved = false;
         setStorageWarning(error.message);
@@ -166,22 +168,28 @@ export default function useVoiceStudio(
       speed = speedRef.current,
       epoch = lifecycleEpoch.current;
     let count = 0;
-    for (const record of p.voiceRecords || []) {
-      if (record.speed !== speed) continue;
-      const key =
-        record.text.trim() === p.english.trim()
-          ? "article"
-          : p.scenes.find((s) => s.english.trim() === record.text.trim())?.id;
-      if (!key || isFresh(assetsRef.current[key], textFor(key), speed))
-        continue;
+    for (const { record, key } of voiceRecoveryCandidates(
+      p,
+      p.voiceRecords || [],
+      speed,
+    )) {
+      if (isFresh(assetsRef.current[key], textFor(key), speed)) continue;
       let value;
       try {
-        value = await readMedia(`voice:${record.fingerprint}`);
+        value =
+          (await readMedia(await voiceCacheKey(record))) ||
+          (await readMedia(`voice:${record.fingerprint}`));
       } catch (error) {
         setStorageWarning(error.message);
         continue;
       }
       if (epoch !== lifecycleEpoch.current) return count;
+      if (!value) {
+        setStorageWarning(
+          "最近配音备份不可用，旧版本未自动替换；请先导入原MP3，避免再次付费。",
+        );
+        continue;
+      }
       if (
         !(value?.blob instanceof Blob) ||
         value.kind !== "voice" ||

@@ -69,7 +69,7 @@ export default function SceneImageSettings({
         <span className="muted">
           {s.imageRef?.kind === "generated"
             ? "OpenAI 生成图片"
-            : "本地上传 · 非 AI 生成"}
+            : "本地上传 · 未调用本站AI"}
         </span>
       </div>
       {s.imageRef && (

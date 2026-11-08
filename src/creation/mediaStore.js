@@ -81,11 +81,15 @@ export const writeMedia = (key, value) => mediaTransaction(key, value);
 export function cachedVoiceRecord(asset) {
   const alignment = (a) =>
     a
-      ? {
-          characters: a.characters,
-          character_start_times_seconds: a.character_start_times_seconds,
-          character_end_times_seconds: a.character_end_times_seconds,
-        }
+      ? Object.fromEntries(
+          Object.entries(a).filter(([key]) =>
+            [
+              "characters",
+              "character_start_times_seconds",
+              "character_end_times_seconds",
+            ].includes(key),
+          ),
+        )
       : null;
   return {
     kind: "voice",
@@ -97,3 +101,9 @@ export function cachedVoiceRecord(asset) {
     normalizedAlignment: alignment(asset.normalizedAlignment),
   };
 }
+
+export const voiceCacheKey = (asset) =>
+  mediaKey(
+    "voice",
+    JSON.stringify([asset.fingerprint, asset.text.trim(), asset.speed]),
+  );

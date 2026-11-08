@@ -395,3 +395,167 @@ test("local media journal confirms transaction commit, preserves data on failure
   });
   assert.ok(!JSON.stringify(record).includes("must-never-store"));
 });
+
+test("recovery reserves repeated sentences for their saved slots and never substitutes article for a scene", async () => {
+  const { voiceRecoveryCandidates, voiceMode } = await import(
+    "../src/creation/voiceRecovery.js"
+  );
+  const project = {
+    english: "Again. Again.",
+    scenes: [
+      { id: "new-0", english: "Again." },
+      { id: "new-1", english: "Again." },
+    ],
+  };
+  const records = [
+    { key: "scene-0", text: "Again.", speed: 0.8, fingerprint: "a".repeat(64) },
+    { key: "scene-1", text: "Again.", speed: 0.8, fingerprint: "b".repeat(64) },
+  ];
+  const result = voiceRecoveryCandidates(project, records, 0.8);
+  assert.equal(result.length, 2);
+  assert.equal(
+    result.find((r) => r.key === "new-0").record.fingerprint,
+    "a".repeat(64),
+  );
+  assert.equal(
+    result.find((r) => r.key === "new-1").record.fingerprint,
+    "b".repeat(64),
+  );
+  const single = {
+    english: "Again.",
+    scenes: [{ id: "single", english: "Again." }],
+    voiceRecords: [records[0]],
+  };
+  assert.equal(
+    voiceRecoveryCandidates(single, single.voiceRecords, 0.8)[0].key,
+    "single",
+  );
+  assert.equal(voiceMode(single, {}, 0.8), "scenes");
+});
+test("recovery selects newest matching take first, protects direct slots, and falls back after reorder", async () => {
+  const { voiceRecoveryCandidates } = await import(
+    "../src/creation/voiceRecovery.js"
+  );
+  const project = {
+    english: "One. Two. One.",
+    scenes: [
+      { id: "first", english: "One." },
+      { id: "second", english: "One." },
+      { id: "third", english: "Two." },
+    ],
+  };
+  const records = [
+    { key: "scene-0", text: "One.", speed: 0.8, fingerprint: "old" },
+    { key: "scene-1", text: "Two.", speed: 0.8, fingerprint: "two" },
+    { key: "scene-2", text: "One.", speed: 0.8, fingerprint: "other" },
+    { key: "scene-0", text: "One.", speed: 0.8, fingerprint: "new" },
+    {
+      key: "article",
+      text: project.english,
+      speed: 0.8,
+      fingerprint: "article-old",
+    },
+    {
+      key: "article",
+      text: project.english,
+      speed: 0.8,
+      fingerprint: "article-new",
+    },
+  ];
+  const result = voiceRecoveryCandidates(project, records, 0.8);
+  assert.equal(result.find((r) => r.key === "first").record.fingerprint, "new");
+  assert.equal(
+    result.find((r) => r.key === "second").record.fingerprint,
+    "other",
+  );
+  assert.equal(result.find((r) => r.key === "third").record.fingerprint, "two");
+  assert.equal(
+    result.find((r) => r.key === "article").record.fingerprint,
+    "article-new",
+  );
+  assert.ok(
+    !result.some(
+      (r) =>
+        r.record.fingerprint === "old" ||
+        r.record.fingerprint === "article-old",
+    ),
+  );
+  assert.deepEqual(voiceRecoveryCandidates(project, records, 1), []);
+});
+
+test("cached alignment preserves timing signatures even when provider field order differs", async () => {
+  const { cachedVoiceRecord } = await import("../src/creation/mediaStore.js");
+  const project = p();
+  const asset = {
+    blob: new Blob(["ID3"]),
+    text: project.english,
+    speed: 0.8,
+    duration: 10,
+    fingerprint: "a".repeat(64),
+    alignment: {
+      character_end_times_seconds: [1],
+      characters: ["x"],
+      character_start_times_seconds: [0],
+    },
+    normalizedAlignment: {
+      character_start_times_seconds: [0],
+      characters: ["x"],
+      character_end_times_seconds: [1],
+    },
+  };
+  const cached = { ...cachedVoiceRecord(asset), duration: asset.duration };
+  assert.equal(
+    timingSignature(project, { article: asset }, 0.8, "article"),
+    timingSignature(project, { article: cached }, 0.8, "article"),
+  );
+});
+test("identical audio bytes for different requested text/speed use independent recovery keys", async () => {
+  const { voiceCacheKey } = await import("../src/creation/mediaStore.js");
+  const a = { fingerprint: "a".repeat(64), text: "Hello", speed: 0.8 };
+  assert.notEqual(
+    await voiceCacheKey(a),
+    await voiceCacheKey({ ...a, speed: 1 }),
+  );
+  assert.notEqual(
+    await voiceCacheKey(a),
+    await voiceCacheKey({ ...a, text: "Hello." }),
+  );
+  assert.equal(
+    await voiceCacheKey(a),
+    await voiceCacheKey({ ...a, text: " Hello " }),
+  );
+});
+
+test("a never-generated repeated sentence is not falsely labelled a lost paid result", async () => {
+  const { hasMissingVoiceBackup } = await import(
+    "../src/creation/voiceRecovery.js"
+  );
+  const project = {
+    english: "Again. Again.",
+    scenes: [
+      { id: "first", english: "Again." },
+      { id: "second", english: "Again." },
+    ],
+    voiceRecords: [
+      {
+        key: "scene-0",
+        text: "Again.",
+        speed: 0.8,
+        fingerprint: "a".repeat(64),
+      },
+    ],
+  };
+  assert.equal(
+    hasMissingVoiceBackup(
+      project,
+      { first: { text: "Again.", speed: 0.8 } },
+      0.8,
+      ["first", "second"],
+    ),
+    false,
+  );
+  assert.equal(
+    hasMissingVoiceBackup(project, {}, 0.8, ["first", "second"]),
+    true,
+  );
+});

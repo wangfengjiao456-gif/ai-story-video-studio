@@ -1,3 +1,4 @@
+import { voiceMode, hasMissingVoiceBackup } from "../creation/voiceRecovery.js";
 import { mediaKey, readMedia, writeMedia } from "../creation/mediaStore.js";
 import { STYLE_OPTIONS } from "../creation/style.js";
 import React, { useState, useRef, useEffect } from "react";
@@ -198,8 +199,7 @@ export default function CreationStudio({
     ...p.scenes.filter((s) => !s.imageRef).map((s) => s.id),
   ];
   const voiceKeys = (p) =>
-    isFresh(ai.assets.article, p.english, ai.speed) ||
-    p.english.trim().length <= 5000
+    voiceMode(p, ai.assets, ai.speed) === "article"
       ? ["article"]
       : p.scenes.map((s) => s.id);
   const voiceText = (p, k) =>
@@ -211,11 +211,7 @@ export default function CreationStudio({
       (k) => !isFresh(ai.assets[k], voiceText(p, k), ai.speed),
     );
   const lostVoice = (p) =>
-    voiceMissing(p).some((k) =>
-      (p.voiceRecords || []).some(
-        (r) => r.text.trim() === voiceText(p, k).trim() && r.speed === ai.speed,
-      ),
-    );
+    hasMissingVoiceBackup(p, ai.assets, ai.speed, voiceKeys(p));
   async function batch() {
     if (lock.current || generation.busy || generation.pending || ai.busy)
       return;
