@@ -240,6 +240,8 @@ export async function verifyProjectImages(
     ref: scene.imageRef,
     label: `分镜 ${i + 1}`,
   }));
+  if (project.cover?.imageRef)
+    entries.push({ ref: project.cover.imageRef, label: "封面00" });
   if (project.character.referenceImage)
     entries.push({
       ref: project.character.referenceImage,

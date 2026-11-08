@@ -58,13 +58,15 @@ export default function Preview({
         <button
           aria-label="下一分镜"
           disabled={!scene || index === project.scenes.length - 1}
-          onClick={() => change(index + 1)}
+          onClick={() => change(videoFrame?.isCover ? 0 : index + 1)}
         >
           <ChevronRight size={20} />
         </button>
       </div>
       <div className="preview-count">
-        分镜 {scene ? String(index + 1).padStart(2, "0") : "00"}{" "}
+        {videoFrame?.isCover
+          ? "封面 00"
+          : `分镜 ${scene ? String(index + 1).padStart(2, "0") : "00"}`}{" "}
         <span>/ {String(project.scenes.length).padStart(2, "0")}</span>
       </div>
       <div className="timeline">

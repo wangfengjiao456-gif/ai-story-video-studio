@@ -1,5 +1,9 @@
 import { imageInput } from "../imageConfig.js";
-import { prepareReference, validateImageRef } from "./images.js";
+import {
+  prepareReference,
+  validateImageRef,
+  decodeUploadedImage,
+} from "./images.js";
 export function generationSignature(project, scene) {
   return JSON.stringify([
     imageInput(project, scene),
@@ -10,7 +14,11 @@ export function generationSignature(project, scene) {
 export async function generateSceneImage(
   project,
   scene,
-  { signal, fetchImpl = fetch } = {},
+  {
+    signal,
+    fetchImpl = fetch,
+    decode = typeof Image === "undefined" ? null : decodeUploadedImage,
+  } = {},
 ) {
   const input = imageInput(project, scene);
   const reference = project.character.referenceImage
@@ -52,5 +60,18 @@ export async function generateSceneImage(
   if (!data?.imageRef || data.imageRef.kind !== "generated")
     throw Error("服务未返回有效生成图片。");
   validateImageRef(data.imageRef);
+  if (decode) {
+    try {
+      const bytes = Uint8Array.from(
+        atob(data.imageRef.dataUrl.split(",")[1]),
+        (c) => c.charCodeAt(0),
+      );
+      await decode(new Blob([bytes], { type: "image/jpeg" }));
+    } catch {
+      throw Error(
+        "已收到图片结果，但浏览器无法完整解码，原图未替换；可能已计费，请检查图片/内存后决定是否手动重试，不会自动重复生成。",
+      );
+    }
+  }
   return data.imageRef;
 }

@@ -1,5 +1,7 @@
 # AI Story Video Studio：iPad 操作指南
 
+**V4 最新操作与部署请看 [V4_GUIDE.md](V4_GUIDE.md)**；下文保留 V3.1 历史操作，不表示 V4 Preview 与旧网址共享存档。
+
 这份指南面向不会编程的使用者。使用 Safari 即可制作视频；Render 和 Vercel 的第一次配置需要你本人登录账户。代码不会替你购买服务，也不会自动消耗 ElevenLabs 额度。
 
 ## 一、先保护现在的故事

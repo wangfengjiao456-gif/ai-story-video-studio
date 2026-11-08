@@ -1,3 +1,6 @@
+import { voiceMode, appendVoiceRecord } from "./creation/voiceRecovery.js";
+import CreationStudio from "./components/CreationStudio.jsx";
+import { SIGNATURE_STYLE } from "./creation/project.js";
 import { verifyProjectImages } from "./services/images.js";
 import React, { useState, useEffect, useRef } from "react";
 import {
@@ -90,6 +93,27 @@ export default function App() {
     !!startup.recovery && !startup.project,
   );
   const [videoEpoch, setVideoEpoch] = useState(0);
+  const [autoPrepareRequest, setAutoPrepareRequest] = useState(null);
+  function commitCreationProject(next, options = {}) {
+    if (blocked || recovery) {
+      setMessage("请先处理原存档恢复，再使用智能制作；原始内容未覆盖。");
+      return false;
+    }
+    setP(next);
+    if (!options.saveNow) return true;
+    try {
+      const result = saveProject(localStorage, next);
+      setLastSavedProject(next);
+      setBackups(result.backups);
+      setSaveStatus("智能规划已立即保存到当前网址；音频需单独备份。");
+      return true;
+    } catch (error) {
+      setSaveStatus(
+        `规划保存失败：${error.message} 请先导出JSON；原存档未覆盖。`,
+      );
+      return false;
+    }
+  }
   const videoPause = useRef(null),
     videoTransport = useRef(null);
   const [videoPlayback, setVideoPlayback] = useState({
@@ -98,6 +122,11 @@ export default function App() {
   });
   const [videoFrame, setVideoFrame] = useState(null);
   const ai = useVoiceStudio(p, {
+    onAssetCreated: (record) =>
+      setP((prev) => ({
+        ...prev,
+        voiceRecords: appendVoiceRecord(prev.voiceRecords || [], record, prev),
+      })),
     onStart: () => {
       videoPause.current?.();
       setPlaying(false);
@@ -109,6 +138,17 @@ export default function App() {
   const imageGeneration = useImageGeneration(p, (id, imageRef) =>
     setP((prev) => ({
       ...prev,
+      ...(id === "cover-00"
+        ? {
+            cover: {
+              ...prev.cover,
+              imageRef,
+              imageFit: "contain",
+              imageScale: 1,
+              imagePosition: { x: 50, y: 50 },
+            },
+          }
+        : {}),
       scenes: prev.scenes.map((scene) =>
         scene.id === id
           ? {
@@ -122,6 +162,21 @@ export default function App() {
       ),
     })),
   );
+  const editCharacter = (key, value) =>
+    setP((prev) => ({
+      ...prev,
+      character: { ...prev.character, [key]: value },
+      ...(prev.creation
+        ? {
+            creation: {
+              ...prev.creation,
+              characters: prev.creation.characters.map((c, i) =>
+                i === 0 ? { ...c, [key]: value } : c,
+              ),
+            },
+          }
+        : {}),
+    }));
   const setCharacterReference = (referenceImage) =>
     setP((prev) => ({
       ...prev,
@@ -362,7 +417,7 @@ export default function App() {
           </span>
         </a>
         <div className="workspace-label">
-          创作工作台 <span>V3.1</span>
+          创作工作台 <span>V4.0</span>
         </div>
         <nav>
           {tabs.map(([id, label, Icon], i) => (
@@ -514,12 +569,44 @@ export default function App() {
                   hidden={tab !== "video"}
                   onStart={stop}
                   onFrame={setIndex}
+                  autoPrepareRequest={autoPrepareRequest}
+                  onProjectChange={update}
                   onTimingChange={(videoTiming) => update({ videoTiming })}
                 />
                 {tab === "ai" && <ServiceStatus />}
                 <AIVoicePanel project={p} studio={ai} hidden={tab !== "ai"} />
                 {tab === "article" && (
                   <>
+                    {!blocked && !recovery && (
+                      <CreationStudio
+                        project={p}
+                        key={videoEpoch}
+                        onProject={commitCreationProject}
+                        generation={imageGeneration}
+                        ai={ai}
+                        onVideo={(prepare) => {
+                          setTab("video");
+                          if (prepare === true)
+                            setAutoPrepareRequest({
+                              id: Date.now(),
+                              source:
+                                isFresh(
+                                  ai.assets.article,
+                                  p.english,
+                                  ai.speed,
+                                ) || p.english.trim().length <= 5000
+                                  ? "article"
+                                  : "scenes",
+                            });
+                        }}
+                        onReference={setCharacterReference}
+                      />
+                    )}
+                    {(blocked || recovery) && (
+                      <p role="status">
+                        请先修复或导入原项目并保存，再使用智能制作；恢复模式不会自动覆盖原存档。
+                      </p>
+                    )}
                     <div className="intro">
                       <span className="intro-icon">
                         <BookOpen size={22} />
@@ -736,13 +823,39 @@ export default function App() {
                         key={key}
                         label={label}
                         value={p.character[key]}
-                        onChange={(value) =>
-                          update({
-                            character: { ...p.character, [key]: value },
-                          })
-                        }
+                        onChange={(value) => editCharacter(key, value)}
                       />
                     ))}
+                    {p.creation?.characters.slice(1).map((c, i) => (
+                      <details key={i}>
+                        <summary>
+                          人物 {i + 2} · {c.name}
+                        </summary>
+                        {["name", "appearance", "clothing"].map((key, n) => (
+                          <Field
+                            key={key}
+                            label={`人物${i + 2}${["名称", "固定外貌", "固定服装"][n]}`}
+                            value={c[key]}
+                            onChange={(value) =>
+                              update({
+                                creation: {
+                                  ...p.creation,
+                                  characters: p.creation.characters.map(
+                                    (item, index) =>
+                                      index === i + 1
+                                        ? { ...item, [key]: value }
+                                        : item,
+                                  ),
+                                },
+                              })
+                            }
+                          />
+                        ))}
+                      </details>
+                    ))}
+                    <p className="muted">
+                      参考图主要约束主角；固定描述会发送到每镜，但不能保证多人物外貌完全一致，请审核插画。
+                    </p>
                     <CharacterReference
                       reference={p.character.referenceImage}
                       onChange={setCharacterReference}
@@ -750,21 +863,25 @@ export default function App() {
                     <label className="field">
                       <span>统一画风</span>
                       <div className="style-options">
-                        {["绘本水彩", "电影质感", "温暖插画", "极简剪纸"].map(
-                          (s, i) => (
-                            <button
-                              key={s}
-                              className={p.style === s ? "chosen" : ""}
-                              onClick={() => update({ style: s })}
-                            >
-                              <div className={`style-swatch swatch-${i}`} />
-                              <span>
-                                {s}
-                                {p.style === s && <Check size={14} />}
-                              </span>
-                            </button>
-                          ),
-                        )}
+                        {[
+                          SIGNATURE_STYLE,
+                          "绘本水彩",
+                          "电影质感",
+                          "温暖插画",
+                          "极简剪纸",
+                        ].map((s, i) => (
+                          <button
+                            key={s}
+                            className={p.style === s ? "chosen" : ""}
+                            onClick={() => update({ style: s })}
+                          >
+                            <div className={`style-swatch swatch-${i}`} />
+                            <span>
+                              {s}
+                              {p.style === s && <Check size={14} />}
+                            </span>
+                          </button>
+                        ))}
                       </div>
                     </label>
                     <label className="field">
@@ -964,7 +1081,7 @@ export default function App() {
           </div>
         )}
         <footer>
-          用故事连接语言，用创作发现可能。<span>STORY STUDIO / V3.1</span>
+          用故事连接语言，用创作发现可能。<span>STORY STUDIO / V4.0</span>
         </footer>
       </div>
       {message && (

@@ -6,6 +6,7 @@ export default function Field({ label, value, onChange, rows = 3, ...props }) {
     <label className="field">
       <span>{label}</span>
       <textarea
+        aria-label={label}
         aria-invalid={!!error}
         value={value}
         rows={rows}

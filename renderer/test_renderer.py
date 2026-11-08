@@ -10,6 +10,17 @@ def png(path,color=(60,110,75)):
     path.write_bytes(b'\x89PNG\r\n\x1a\n'+chunk(b'IHDR',struct.pack('>IIBBBBB',1080,1920,8,2,0,0,0))+chunk(b'IDAT',zlib.compress(raw))+chunk(b'IEND',b''))
 
 class RendererTests(unittest.TestCase):
+    @unittest.skipUnless(shutil.which('ffmpeg') and shutil.which('ffprobe'),'FFmpeg not installed')
+    def test_v4_pcm_mixed_audio_keeps_cover_and_full_duration(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);png(root/'frame-0.png',(220,210,180));png(root/'frame-1.png',(30,100,60))
+            subprocess.run(['ffmpeg','-v','error','-f','lavfi','-i','sine=frequency=440:duration=1','-af','adelay=1000','-ar','32000','-ac','1','-c:a','pcm_s16le','-y',str(root/'audio-0.wav')],check=True)
+            manifest={'version':1,'width':1080,'height':1920,'fps':30,'frames':[{'frames':30},{'frames':30}],'audios':[{'duration':2,'encoding':'wav'}]}
+            result=render(root,manifest)
+            self.assertLess(abs(result['duration']-2),1/30)
+            self.assertEqual(result['audioCodec'],'aac')
+            with self.assertRaises(ValueError):validate_manifest({**manifest,'audios':[{'duration':2,'encoding':'evil'}]})
+
     def test_origin_configuration_preserves_exact_entries_and_normalizes_slashes(self):
         import server
         self.assertEqual(server.parse_origins(' https://existing.test/, https://preview.test ,https://existing.test '),{'https://existing.test','https://preview.test'})

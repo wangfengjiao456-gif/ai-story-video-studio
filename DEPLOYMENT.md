@@ -1,5 +1,7 @@
 # MP3 对齐与真实 MP4：Preview 部署
 
+**V4 用户先阅读 [V4_GUIDE.md](V4_GUIDE.md)**，使用 `feat/story-studio-v4`。以下 V3.1 部署记录保留作兼容参考；不要照旧分支部署 V4 混音任务。
+
 Vercel 只运行前端、密钥代理和小型 API；FFmpeg 在独立 Docker 服务运行。**只部署 Vercel 不会具备 MP4 编码能力。** 本仓库包含完整服务，必须完成下面两部分配置；当前修复不会自动修改 Production。
 
 ## 1. 部署独立 MP4 服务（无需任何 AI 密钥）
@@ -136,3 +138,7 @@ STUDIO_URL=https://your-preview.vercel.app npm run verify:preview
 `fix/studio-v3-1-stability` 的修改见 [STABILITY_REVIEW.md](STABILITY_REVIEW.md)。连接检查/创建任务的上游超时为45秒，Vercel函数预算60秒；仍不自动重提任务。Render后台白名单仅做规范化，既有允许来源不会自动增加或删除；拒绝通配符与非来源路径。新分支Preview须在环境变量范围包含该分支，并在Render原有白名单追加实际新来源。不要改Production。
 
 图片安全诊断在 Vercel → 当前 Preview Deployment → Runtime Logs，过滤 `image_api_failure`，只含已知分类/上游状态/request ID，不含原始密钥、描述或参考图。SDK原始错误正文不记录，避免意外泄密。
+
+## V4部署入口
+
+本轮独立分支 `feat/story-studio-v4`，需要更新已有Render worker以支持V4 PCM WAV，并将Vercel Preview变量范围覆盖新分支。不要修改Production。完整一次集中配置、白名单及最小真实验收见 [V4_GUIDE.md](V4_GUIDE.md)。旧项目关闭封面/音乐时仍支持原MP3；旧worker缺少PCM能力会明确拒绝V4混音任务，不假成功。

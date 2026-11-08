@@ -29,7 +29,9 @@ export default function AIVoicePanel({ project, studio, hidden }) {
               ? "生成中…"
               : asset
                 ? fresh
-                  ? "已生成"
+                  ? asset.external
+                    ? "已导入"
+                    : "已生成"
                   : "需要重新生成"
                 : "未生成"}
           </span>
@@ -96,6 +98,16 @@ export default function AIVoicePanel({ project, studio, hidden }) {
           <p>使用固定声音生成真实 MP3，适合英语跟读练习。</p>
         </div>
       </div>
+      {studio.restoreCached && (
+        <button disabled={!!busy} onClick={() => studio.restoreCached()}>
+          恢复本机配音备份（免费）
+        </button>
+      )}
+      {studio.storageWarning && (
+        <p role="alert" className="validation-error">
+          本机配音备份提示：{studio.storageWarning}
+        </p>
+      )}
       <div className="voice-config">
         <span>
           声音 Voice ID <code>{VOICE_ID}</code>
@@ -181,8 +193,8 @@ export default function AIVoicePanel({ project, studio, hidden }) {
       <div className="note">
         <strong>保存与备用方案</strong>
         <p>
-          音频仅保留在当前页面内存中，不写入 localStorage 或项目
-          JSON。刷新或导入项目会清除音频，请及时下载
+          成功生成的音频会尝试保存到同网址的本机媒体备份，可免费恢复；JSON不包含MP3。浏览器清理/配额可能导致备份失效，仍须单独下载。外部MP3需另存原件，不验证原声音或实际语速。音频文件不写入
+          localStorage 或项目 JSON。刷新或导入项目会清除音频，请及时下载
           MP3。“配音与字幕”中的浏览器英文朗读仍可免费使用。文章与分镜不一致时仅估算切镜；中文字幕沿用人工译文，不做逐词对齐。
         </p>
       </div>

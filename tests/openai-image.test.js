@@ -298,7 +298,9 @@ test("新默认位置上移，旧 V3 字段保留，三种画幅全部安全分�
         assert.ok(geo.bottom + geo.top + geo.textHeight <= geo.height + 0.01);
       }
   assert.equal(frameGeometry(templateDefaults(), 12, "4:5").height, 1350);
-  assert.equal(imageSize("16:9"), "1536x1024");
+  assert.equal(imageSize("16:9"), "1536x864");
+  assert.equal(imageSize("9:16"), "864x1536");
+  assert.equal(imageSize("4:5"), "1024x1280");
 });
 test("Contain/Cover 等比构图，不改变原始尺寸；PNG 与预览共用渲染计划", () => {
   const rect = imageRectangle(1000, 500, 1080, 1350, "contain", 1, {
@@ -454,4 +456,23 @@ test("安全日志保留上游状态及请求编号，丢弃密钥、原始错�
   });
   assert.ok(!JSON.stringify([events, r]).includes("private-server-key"));
   assert.ok(!JSON.stringify([events, r]).includes("full private prompt"));
+});
+
+test("生成图片须完整解码后才作为成功返回；损坏结果不重试、不假成功", async () => {
+  const p = project();
+  let calls = 0;
+  await assert.rejects(
+    generateSceneImage(p, p.scenes[0], {
+      fetchImpl: async () => {
+        calls++;
+        return Response.json({ imageRef });
+      },
+      decode: async () => {
+        throw Error("truncated JPEG");
+      },
+    }),
+    /可能已计费/,
+  );
+  assert.equal(calls, 1);
+  assert.equal(p.scenes[0].imageRef, undefined);
 });

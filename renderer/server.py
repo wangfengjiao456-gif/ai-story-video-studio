@@ -97,7 +97,7 @@ class Handler(BaseHTTPRequestHandler):
                 if not isinstance(body,dict):return self.json(400,{'error':'连接检查需要 JSON 对象。'})
                 if body.get('origin') not in ORIGINS:return self.json(403,{'error':'请在渲染服务 ALLOWED_ORIGINS 添加当前 Preview 的完整 HTTPS 域名。'})
                 if not health():return self.json(503,{'error':'FFmpeg/ffprobe 未安装或临时磁盘空间不足。'})
-                return self.json(200,{'ok':True})
+                return self.json(200,{'ok':True,'version':4,'capabilities':{'pcmWav':True}})
             if self.path=='/jobs':
                 if not KEY or not hmac.compare_digest(self.headers.get('Authorization',''),f'Bearer {KEY}'):return self.json(401,{'error':'渲染服务密钥不匹配。'})
                 body=json.loads(self.body(100000));validate_manifest(body)
@@ -112,7 +112,7 @@ class Handler(BaseHTTPRequestHandler):
             if not j:return self.json(401,{'error':'任务凭证无效或已过期。'})
             with LOCK:
                 if action!='start' or j['state']!='uploading':return self.json(409,{'error':'任务不可重复启动。'})
-                expected=[f'frame-{i}.png' for i in range(len(j['manifest']['frames']))]+[f'audio-{i}.mp3' for i in range(len(j['manifest']['audios']))]
+                expected=[f'frame-{i}.png' for i in range(len(j['manifest']['frames']))]+[f"audio-{i}.{a.get('encoding','mp3')}" for i,a in enumerate(j['manifest']['audios'])]
                 if not all((ROOT/id/name).is_file() for name in expected):return self.json(400,{'error':'图片或音频尚未上传完成。'})
                 if not SLOT.acquire(False):return self.json(429,{'error':'渲染服务正忙，请稍后重新导出。'})
                 j['state']='queued';threading.Thread(target=run,args=(id,),daemon=True).start()
@@ -121,7 +121,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_PUT(self):
         id,j,action=self.job()
         if not j:return self.json(401,{'error':'任务凭证无效或已过期。'})
-        valid=action in [f'frame-{i}.png' for i in range(len(j['manifest']['frames']))]+[f'audio-{i}.mp3' for i in range(len(j['manifest']['audios']))]
+        valid=action in [f'frame-{i}.png' for i in range(len(j['manifest']['frames']))]+[f"audio-{i}.{a.get('encoding','mp3')}" for i,a in enumerate(j['manifest']['audios'])]
         if not valid:return self.json(400,{'error':'文件名无效。'})
         if not UPLOADS.acquire(False):return self.json(429,{'error':'上传并发已满，请稍后重试。'})
         try:
@@ -143,7 +143,7 @@ class Handler(BaseHTTPRequestHandler):
         # Render liveness: never require credentials or run media/disk checks here.
         if urlparse(self.path).path=='/healthz':return self.json(200,{'ok':True})
         if self.path=='/health':
-            ok=health();return self.json(200 if ok else 503,{'ok':ok,'version':2})
+            ok=health();return self.json(200 if ok else 503,{'ok':ok,'version':4})
         id,j,action=self.job()
         if not j:return self.json(401,{'error':'任务凭证无效或已过期。'})
         if action is None:return self.json(200,{k:j[k] for k in ['state','progress','expiresAt','error','result'] if k in j})

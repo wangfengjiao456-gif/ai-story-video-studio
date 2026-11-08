@@ -3,7 +3,7 @@ services:
   - type: web
     name: story-studio-renderer
     runtime: docker
-    branch: feat/story-studio-v3-1
+    branch: feat/story-studio-v4
     plan: standard
     dockerfilePath: ./renderer/Dockerfile
     dockerContext: .

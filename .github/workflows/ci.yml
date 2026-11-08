@@ -9,6 +9,7 @@ on:
         feat/elevenlabs-v2,
         feat/story-studio-v3,
         feat/story-studio-v3-1,
+        feat/story-studio-v4,
       ]
 permissions:
   contents: read
@@ -40,6 +41,7 @@ jobs:
         with:
           name: video-regression
           path: |
+            work/v4-regression/*
             work/e2e/*.log
             work/mp4-regression/browser-export.mp4
             work/deployment-verification/preview-render.mp4

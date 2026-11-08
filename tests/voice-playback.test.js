@@ -20,11 +20,13 @@ const mockResponse = () =>
   Response.json({ audio_base64: Buffer.from("ID3 mock").toString("base64") });
 async function mount(p = project()) {
   let studio, renderer;
-  const frames = [];
+  const frames = [],
+    records = [];
   const Harness = ({ project }) => {
     studio = useVoiceStudio(project, {
       onStart: () => {},
       onFrame: (i) => frames.push(i),
+      onAssetCreated: (record) => records.push(record),
     });
     return null;
   };
@@ -61,6 +63,7 @@ async function mount(p = project()) {
     },
     audio,
     frames,
+    records,
     async update(p) {
       await act(async () =>
         renderer.update(React.createElement(Harness, { project: p })),
@@ -342,6 +345,31 @@ test("切换 MP3 的早期 NaN 时长不误报，真实元数据恢复时清除�
     await act(async () => h.studio.audioProps.onLoadedMetadata());
     assert.equal(h.studio.error, "");
     assert.equal(h.studio.current.duration, 25);
+  } finally {
+    await h.cleanup();
+  }
+});
+
+test("删除在途配音的分镜仍保留有效恢复槽位，不生成scene--1孤立记录", async () => {
+  let finish;
+  globalThis.fetch = async () => new Promise((resolve) => (finish = resolve));
+  const h = await mount();
+  try {
+    let pending;
+    await act(async () => {
+      pending = h.studio.generate("s1");
+    });
+    const changed = project();
+    changed.scenes = changed.scenes.filter((s) => s.id !== "s1");
+    await h.update(changed);
+    await act(async () => {
+      finish(mockResponse());
+      await pending;
+    });
+    assert.equal(h.records.length, 1);
+    assert.equal(h.records[0].key, "scene-0");
+    assert.equal(h.records[0].text, "Hello.");
+    assert.equal(h.studio.assets.s1.text, "Hello.");
   } finally {
     await h.cleanup();
   }

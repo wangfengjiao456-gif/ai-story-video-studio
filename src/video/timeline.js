@@ -1,3 +1,4 @@
+import { coverScene } from "../creation/project.js";
 import { validateCues } from "./alignment.js";
 import { articleTimeline, isFresh } from "../services/aiVoice.js";
 import { framePlan } from "../presentation/frameRenderer.js";
@@ -38,6 +39,7 @@ export function buildVideoTimeline(
   speed,
   mode = "article",
   measure,
+  mixedAudio,
 ) {
   if (!project.scenes.length) throw Error("请先添加分镜。");
   for (let i = 0; i < project.scenes.length; i++)
@@ -192,6 +194,40 @@ export function buildVideoTimeline(
     }
     frames.splice(0, frames.length, ...filled);
   }
+  const coverDuration = project.cover?.enabled
+    ? Math.round(project.cover.duration * FPS) / FPS
+    : 0;
+  if (coverDuration) {
+    if (!project.cover.imageRef)
+      throw Error("封面00尚无图片，请上传/生成，或关闭封面。");
+    const scene = { ...coverScene(project), isCover: true };
+    const plan = framePlan(p, scene, measure);
+    if (plan.layout.pages.length !== 1)
+      throw Error("封面标题过长，请缩短标题以便完整显示。");
+    for (const f of frames) {
+      f.start += coverDuration;
+      f.end += coverDuration;
+    }
+    frames.unshift({
+      sceneIndex: 0,
+      isCover: true,
+      page: 0,
+      start: 0,
+      end: coverDuration,
+      frames: Math.round(coverDuration * FPS),
+      plan,
+    });
+  }
+  const originalAudios = audios;
+  const totalDuration = duration + coverDuration;
+  if (totalDuration > 600) throw Error("含封面的视频最多10分钟。");
+  const requiresMix =
+    !!(coverDuration || project.music?.enabled) && !mixedAudio;
+  if (mixedAudio) {
+    if (Math.abs(mixedAudio.duration - totalDuration) > 1 / FPS)
+      throw Error("混音时长与视频时轴不一致，请重新准备。");
+    audios = [mixedAudio];
+  }
   if (frames.length > 300)
     throw Error("字幕分页超过 300 页，请缩短内容或拆成多个项目。");
   return {
@@ -205,8 +241,12 @@ export function buildVideoTimeline(
         : precision,
     reason,
     manualStale: !!project.videoTiming && !manual && !savedCues,
-    duration,
-    sourceDuration: duration,
+    duration: totalDuration,
+    sourceDuration: totalDuration,
+    narrationDuration: duration,
+    coverDuration,
+    originalAudios,
+    requiresMix,
     ranges,
     frames,
     audios,
@@ -216,7 +256,10 @@ export function buildVideoTimeline(
       height: 1920,
       fps: FPS,
       frames: frames.map((f) => ({ frames: f.frames })),
-      audios: audios.map((a) => ({ duration: a.duration })),
+      audios: audios.map((a) => ({
+        duration: a.duration,
+        ...(a.encoding ? { encoding: a.encoding } : {}),
+      })),
     },
   };
 }

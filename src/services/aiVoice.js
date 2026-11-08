@@ -15,7 +15,9 @@ export async function generateSpeech(
     });
   } catch (err) {
     if (err.name === "AbortError") throw err;
-    throw Error("网络请求失败，请检查网络后重试。");
+    throw Error(
+      "配音网络请求中断，无法确认是否已生成或计费；不会自动重试，请先检查账户用量。",
+    );
   }
   let data;
   try {

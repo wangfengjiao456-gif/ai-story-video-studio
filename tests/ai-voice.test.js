@@ -52,7 +52,7 @@ test("客户端错误：缺少配置、网络、非 JSON 路由和取消", async
         throw Error("offline");
       },
     }),
-    /网络请求失败/,
+    /网络请求中断.*计费/,
   );
   await assert.rejects(
     generateSpeech(text, 0.8, {
