@@ -2,5 +2,15 @@
   "framework": "vite",
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
-  "functions": { "api/elevenlabs.js": { "maxDuration": 60 } }
+  "functions": {
+    "api/elevenlabs.js": {
+      "maxDuration": 60
+    },
+    "api/openai-image.js": {
+      "maxDuration": 120
+    },
+    "api/align-audio.js": {
+      "maxDuration": 120
+    }
+  }
 }
