@@ -617,3 +617,10 @@ test('provider timestamps preserve actual speech pauses in full preview/export a
  assert.equal(frameAt(a,0).plan.scene.english,'');assert.equal(frameAt(a,2).plan.scene.english,'');assert.equal(frameAt(a,4.1).plan.scene.chinese,'停。');assert.equal(frameAt(a,6).plan.scene.english,'');
  const b=buildVideoTimeline({...project,scenes:project.scenes.map(s=>({...s,imageScale:1.2}))},{article:asset},.8);assert.deepEqual(b.ranges,a.ranges);assert.equal(b.audios[0],asset);assert.equal(b.duration,7);
 });
+test('provider timestamp tolerance never extends frames beyond the decoded MP3',()=>{
+ const p=initialProject();p.english='Go.';p.chinese='走。';p.scenes=splitArticle(p.english,p.chinese).map(s=>({...s,imageRef:ref}));
+ const a={text:p.english,speed:.8,duration:1,blob:new Blob(['voice']),url:'blob:voice',alignment:{characters:[...'Go.'],character_start_times_seconds:[0,.1,.8],character_end_times_seconds:[.1,.8,1.2]}};
+ const timeline=buildVideoTimeline(p,{article:a},.8);assert.equal(timeline.precision,'aligned');assert.equal(timeline.ranges[0].end,1);assert.equal(timeline.frames.reduce((n,f)=>n+f.frames,0),30);
+ const outside={...a,alignment:{...a.alignment,character_start_times_seconds:[1.05,1.1,1.15],character_end_times_seconds:[1.1,1.15,1.2]}};
+ assert.equal(buildVideoTimeline(p,{article:outside},.8).precision,'estimated');
+});

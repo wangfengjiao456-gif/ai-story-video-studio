@@ -109,8 +109,8 @@ export function articleTimeline(text, scenes, asset) {
       const last = positions[cursor - 1];
       return {
         index: i,
-        start: a.character_start_times_seconds[first],
-        end: a.character_end_times_seconds[last],
+        start: Math.min(duration,a.character_start_times_seconds[first]),
+        end: Math.min(duration,a.character_end_times_seconds[last]),
       };
     });
     if (
