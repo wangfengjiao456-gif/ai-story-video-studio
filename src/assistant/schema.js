@@ -38,3 +38,9 @@ export {
   cleanPair,
   cleanTopics
 };
+// Independent creation must not inherit or upload an unrelated existing work.
+export function assistantContext(project, request, mode) {
+  if (mode === 'rewrite' || !/(这篇|当前|现有|已有|上面|原文|本文|根据文章|基于文章|\b(?:this|current|existing|above)\s+(?:article|story|text)\b)/i.test(request)) return undefined;
+  if (project.english.length > 12000 || project.chinese.length > 12000) throw Error('当前文章各语言超过12000字符的参考上限，本次尚未发送请求。请在需求框粘贴要处理的片段，或改为独立创作；原文章不必删除。');
+  return { english: project.english, chinese: project.chinese };
+}

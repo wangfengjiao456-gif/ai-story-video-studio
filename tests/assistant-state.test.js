@@ -134,3 +134,14 @@ test("assistant failed persistence is explicit and single-pair rewrite preserves
   }
 });
 test.after(() => rmSync(dir, { recursive: true, force: true }));
+test('large existing work never blocks unrelated generation, while explicit context is preflighted without a request',async()=>{
+ const old=globalThis.fetch,p=project();p.english='x'.repeat(13000);let r,calls=0;
+ globalThis.fetch=async(_url,options)=>{calls++;assert.equal(JSON.parse(options.body).context,undefined);return Response.json({content:content(project())});};
+ try {
+  await act(async()=>{r=create(React.createElement(Component,{project:p,onProject:()=>true}));});
+  await act(async()=>button(r,'生成完整内容').props.onClick());await act(async()=>button(r,'确认一次付费创作').props.onClick());assert.equal(calls,1);
+  await act(async()=>r.unmount());r=null;
+  const referenced={...p,assistant:{...p.assistant,request:'根据这篇文章制作视频'}};
+  await act(async()=>{r=create(React.createElement(Component,{project:referenced,onProject:()=>true}));});await act(async()=>button(r,'生成完整内容').props.onClick());assert.equal(button(r,'确认一次付费创作'),undefined);assert.equal(calls,1);assert.match(JSON.stringify(r.toJSON()),/尚未发送请求/);
+ } finally {globalThis.fetch=old;if(r)await act(async()=>r.unmount());}
+});

@@ -120,3 +120,11 @@ test('first request at clock zero is allowed; an in-flight request stays locked 
  let clock=0,finish,calls=0;const h=createAssistantHandler({getKey:()=> 'mock',now:()=>clock,createClient:()=>({responses:{create:async()=>{calls++;return new Promise(resolve=>finish=resolve);}}})});
  const r=res(),pending=h(req(),r);assert.equal(calls,1);clock=11000;const other=res();await h(req(),other);assert.equal(other.code,409);assert.equal(calls,1);finish({status:'completed',output_text:JSON.stringify(content())});await pending;assert.equal(r.code,200);
 });
+test('unrelated requests and pair rewrites omit oversized old articles; explicit references fail before payment', async()=>{
+ const {assistantContext}=await import('../src/assistant/schema.js');const p={english:'x'.repeat(13000),chinese:'中文'};
+ assert.equal(assistantContext(p,'推荐10个成长话题','topics'),undefined);
+ assert.equal(assistantContext(p,'写一篇新故事','content'),undefined);
+ assert.equal(assistantContext(p,'改写当前文章的这一句','rewrite'),undefined);
+ assert.throws(()=>assistantContext(p,'根据这篇文章制作视频','content'),/尚未发送请求/);
+ assert.deepEqual(assistantContext({english:'Go.',chinese:'走。'},'Use this article.','content'),{english:'Go.',chinese:'走。'});
+});
