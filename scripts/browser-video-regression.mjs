@@ -222,6 +222,104 @@ assert.equal(
   p.scenes[0].imageRef.dataUrl,
 );
 
+// Edit a real prompt, wait for autosave and reload without clicking Save.
+const prompt =
+  "A child in a green coat walks through the forest, soft picturebook light.";
+await page
+  .getByLabel(/画面描述 \/ 图片生成提示词/)
+  .first()
+  .fill(prompt);
+await page.waitForFunction(
+  (expected) =>
+    JSON.parse(localStorage.getItem("story-studio-v1")).scenes[0]
+      .description === expected,
+  prompt,
+);
+await page.reload();
+await page.getByRole("button", { name: "故事分镜", exact: true }).click();
+assert.equal(
+  await page
+    .getByLabel(/画面描述 \/ 图片生成提示词/)
+    .first()
+    .inputValue(),
+  prompt,
+);
+assert.equal(
+  await page.locator(".scene-image-settings .uploaded-thumb").count(),
+  10,
+);
+
+console.log("PASS prompt autosave and refresh / ten images restored");
+// Real image endpoint contract, valid browser JPEG, mocked upstream SDK only.
+const generatedJpeg = await page
+  .locator(".scene-image-settings .uploaded-thumb")
+  .first()
+  .evaluate((img) => {
+    const canvas = document.createElement("canvas");
+    canvas.width = img.naturalWidth;
+    canvas.height = img.naturalHeight;
+    canvas.getContext("2d").drawImage(img, 0, 0);
+    return canvas.toDataURL("image/jpeg", 0.9);
+  });
+const { createImageHandler } = await import("../api/openai-image.js");
+let imageRequests = 0;
+await page.route("**/api/service-status", (route) =>
+  route.fulfill({
+    json: {
+      openai: true,
+      elevenlabs: true,
+      renderer: true,
+      branch: "offline-mock",
+      environment: "development",
+    },
+  }),
+);
+await page.route("**/api/openai-image", (route) =>
+  routeHandler(
+    route,
+    createImageHandler({
+      getKey: () => "offline-image-mock",
+      createClient: () => ({
+        images: {
+          generate: async (options) => {
+            imageRequests++;
+            assert.equal(options.n, 1);
+            assert.ok(options.prompt.includes(prompt));
+            return { data: [{ b64_json: generatedJpeg.split(",")[1] }] };
+          },
+        },
+      }),
+    }),
+  ),
+);
+await page
+  .locator(".scene-image-settings")
+  .first()
+  .getByRole("button", { name: "AI 重新生成配图", exact: true })
+  .click();
+assert.equal(imageRequests, 0);
+await page.getByRole("button", { name: "确认生成这一张", exact: true }).click();
+await page.waitForFunction(
+  (expected) =>
+    document.querySelector(".scene-image-settings .uploaded-thumb")?.src ===
+    expected,
+  generatedJpeg,
+);
+assert.equal(imageRequests, 1);
+p.scenes[0].imageRef = {
+  kind: "generated",
+  dataUrl: generatedJpeg,
+  model: "gpt-image-2.5-sunburst",
+  referenceUsed: false,
+};
+await page.waitForFunction(
+  (expected) =>
+    JSON.parse(localStorage.getItem("story-studio-v1")).scenes[0].imageRef
+      ?.dataUrl === expected,
+  generatedJpeg,
+);
+
+console.log("PASS mocked image generation and autosave");
 // Exercise the remaining editing modules without contacting paid services.
 await page.getByRole("button", { name: "角色与画风", exact: true }).click();
 await page.getByLabel(/人物名称/).fill("回归人物");
@@ -283,6 +381,7 @@ await aiCards
   .nth(1)
   .getByRole("button", { name: "下载 MP3", exact: true })
   .waitFor();
+console.log("PASS character/template and mocked speech workflow");
 assert.equal(speechRequests, 2); // Actual server handler, mocked upstream; no paid generation.
 
 await page.getByRole("button", { name: "视频预览与导出", exact: true }).click();
@@ -472,6 +571,7 @@ await page
 await page.getByText("MP3 真实时长：", { exact: false }).waitFor();
 await page.getByRole("button", { name: "准备完整视频", exact: true }).click();
 await page.locator(".full-video-frame canvas").waitFor();
+console.log("PASS MP3 calibration, playback, persistence");
 const frameEvidence = [];
 for (const index of [0, 1, 3, 4, 8, 9]) {
   await slider.evaluate(
@@ -634,9 +734,9 @@ if (response.status !== 200 || !bytes.includes(Buffer.from("ftyp")))
   throw Error("invalid MP4");
 // A structurally valid JSON with an undecodable image must not replace the live project/audio.
 const invalidProject = structuredClone(saved);
-invalidProject.scenes[0].imageRef.dataUrl =
+invalidProject.scenes[1].imageRef.dataUrl =
   "data:image/png;base64," +
-  Buffer.from(p.scenes[0].imageRef.dataUrl.split(",")[1], "base64")
+  Buffer.from(p.scenes[1].imageRef.dataUrl.split(",")[1], "base64")
     .subarray(0, 24)
     .toString("base64");
 await page

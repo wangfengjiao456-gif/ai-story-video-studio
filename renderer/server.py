@@ -5,7 +5,18 @@ from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
 from urllib.parse import urlparse,parse_qs
 from render import validate_manifest,render
 ROOT=Path(os.environ.get('RENDERER_DATA_DIR','/tmp/story-renderer'));ROOT.mkdir(parents=True,exist_ok=True)
-KEY=os.environ.get('RENDERER_API_KEY','');ORIGINS=set(x.strip() for x in os.environ.get('ALLOWED_ORIGINS','').split(',') if x.strip())
+def parse_origins(raw):
+    origins=set()
+    for value in raw.split(','):
+        value=value.strip()
+        if not value:continue
+        parsed=urlparse(value)
+        if parsed.scheme not in ['https','http'] or not parsed.hostname or '*' in value or parsed.username or parsed.password or parsed.path not in ['', '/'] or parsed.query or parsed.fragment:
+            raise ValueError('ALLOWED_ORIGINS requires explicit HTTP(S) origins without paths or wildcards')
+        origins.add(f'{parsed.scheme}://{parsed.netloc.lower()}')
+    return origins
+
+KEY=os.environ.get('RENDERER_API_KEY','');ORIGINS=parse_origins(os.environ.get('ALLOWED_ORIGINS',''))
 JOBS={};LOCK=threading.RLock();SLOT=threading.Semaphore(1);TTL=3600;MAX_JOB_BYTES=200*1024*1024
 UPLOADS=threading.BoundedSemaphore(2)
 RENDER_TIMEOUT=900

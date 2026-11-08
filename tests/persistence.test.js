@@ -12,6 +12,7 @@ import {
   textError,
 } from "../src/model.js";
 import {
+  scheduleProjectSave,
   loadProject,
   saveProject,
   PROJECT_KEY,
@@ -265,4 +266,80 @@ test("项目恰好 5 MB 时保存、刷新与导出导入一致，多一个字�
   p.scenes[0].chinese += "b";
   assert.throws(() => saveProject(storage, p), /5 MB/);
   assert.equal(storage.getItem(PROJECT_KEY), raw);
+});
+
+test("自动保存提示词与十镜、刷新及JSON恢复；取消旧草稿且失败不覆盖", async () => {
+  const p = initialProject();
+  p.english = Array.from({ length: 10 }, (_, i) => `Scene ${i + 1}.`).join(" ");
+  p.scenes = splitArticle(p.english, "");
+  assert.equal(p.scenes.length, 10);
+  assert.ok(p.scenes.every((s) => s.description === ""));
+  p.scenes[0].description = "A child walking through a green forest.";
+  const storage = memoryStorage();
+  let saved = 0;
+  const cancel = scheduleProjectSave(
+    storage,
+    { ...p, title: "obsolete" },
+    { delayMs: 10, onSaved: () => saved++ },
+  );
+  cancel();
+  await new Promise((resolve, reject) =>
+    scheduleProjectSave(storage, p, {
+      delayMs: 10,
+      onSaved: () => {
+        saved++;
+        resolve();
+      },
+      onError: reject,
+    }),
+  );
+  assert.equal(saved, 1);
+  const restored = loadProject(storage).project;
+  assert.equal(restored.scenes[0].description, p.scenes[0].description);
+  assert.equal(
+    parseProject(serializeProject(restored)).scenes[0].description,
+    p.scenes[0].description,
+  );
+  const before = storage.getItem(PROJECT_KEY);
+  const invalid = { ...p, title: "x".repeat(TITLE_LIMIT + 1) };
+  await new Promise((resolve) =>
+    scheduleProjectSave(storage, invalid, {
+      delayMs: 1,
+      onSaved: () => assert.fail("不能假报成功"),
+      onError: resolve,
+    }),
+  );
+  assert.equal(storage.getItem(PROJECT_KEY), before);
+  const denied = {
+    ...storage,
+    setItem: () => {
+      throw Error("QuotaExceeded");
+    },
+  };
+  await new Promise((resolve) =>
+    scheduleProjectSave(denied, p, {
+      delayMs: 1,
+      onSaved: () => assert.fail("不能假报成功"),
+      onError: resolve,
+    }),
+  );
+  assert.equal(storage.getItem(PROJECT_KEY), before);
+});
+
+test("Safari localStorage 属性访问被拒绝时自动保存回调报告失败，不抛出到页面", async () => {
+  const p = initialProject();
+  const error = await new Promise((resolve) =>
+    scheduleProjectSave(
+      () => {
+        throw Error("SecurityError");
+      },
+      p,
+      {
+        delayMs: 1,
+        onSaved: () => assert.fail("不应保存成功"),
+        onError: resolve,
+      },
+    ),
+  );
+  assert.match(error.message, /SecurityError/);
 });

@@ -11,6 +11,12 @@
     },
     "api/align-audio.js": {
       "maxDuration": 120
+    },
+    "api/renderer-status.js": {
+      "maxDuration": 60
+    },
+    "api/video-jobs.js": {
+      "maxDuration": 60
     }
   }
 }

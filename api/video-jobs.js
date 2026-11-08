@@ -1,3 +1,4 @@
+export const config = { maxDuration: 60 };
 export function createVideoJobHandler({
   getConfig = () => ({
     url: process.env.RENDERER_URL,
@@ -48,7 +49,7 @@ export function createVideoJobHandler({
           Authorization: `Bearer ${key}`,
         },
         body: JSON.stringify({ ...body, origin: req.headers.origin }),
-        signal: AbortSignal.timeout(15000),
+        signal: AbortSignal.timeout(45000),
       });
       const result = await response.json();
       if (!response.ok)

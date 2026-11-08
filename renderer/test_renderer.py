@@ -10,6 +10,12 @@ def png(path,color=(60,110,75)):
     path.write_bytes(b'\x89PNG\r\n\x1a\n'+chunk(b'IHDR',struct.pack('>IIBBBBB',1080,1920,8,2,0,0,0))+chunk(b'IDAT',zlib.compress(raw))+chunk(b'IEND',b''))
 
 class RendererTests(unittest.TestCase):
+    def test_origin_configuration_preserves_exact_entries_and_normalizes_slashes(self):
+        import server
+        self.assertEqual(server.parse_origins(' https://existing.test/, https://preview.test ,https://existing.test '),{'https://existing.test','https://preview.test'})
+        for value in ['*','https://*.vercel.app','https://preview.test/path','https://user:secret@preview.test','https://preview.test?query=1']:
+            with self.assertRaises(ValueError):server.parse_origins(value)
+
     def test_healthz_is_public_fast_and_uses_render_port(self):
         import server
         # Port 0 lets the OS reserve an isolated test port; production uses Render's PORT.

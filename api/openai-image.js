@@ -14,6 +14,7 @@ import {
 export const config = { maxDuration: 120 };
 export function createImageHandler({
   getKey = () => process.env.OPENAI_API_KEY,
+  logError = (event) => console.warn("image_api_failure", event),
   createClient = (key) =>
     new OpenAI({
       apiKey: key,
@@ -120,6 +121,39 @@ export function createImageHandler({
     } catch (err) {
       // Classify provider metadata only; never reflect raw messages, headers or keys.
       const codes = [err.code, err.type, err.error?.code, err.error?.type];
+      const knownCodes = new Set([
+        "insufficient_quota",
+        "billing_hard_limit_reached",
+        "billing_not_active",
+        "usage_limit_reached",
+        "rate_limit_exceeded",
+        "model_not_found",
+        "invalid_model",
+        "unsupported_model",
+        "content_policy_violation",
+      ]);
+      const requestId =
+        typeof err.requestID === "string" &&
+        /^req_[A-Za-z0-9_-]{1,100}$/.test(err.requestID)
+          ? err.requestID
+          : undefined;
+      // Do not log arbitrary SDK messages/bodies: they can contain keys, prompts or reference data.
+      try {
+        logError({
+          provider: "openai",
+          operation: reference ? "edit" : "generate",
+          status:
+            Number.isInteger(err.status) &&
+            err.status >= 100 &&
+            err.status <= 599
+              ? err.status
+              : null,
+          code: codes.find((code) => knownCodes.has(code)) || "unknown",
+          ...(requestId ? { requestId } : {}),
+        });
+      } catch {
+        /* Diagnostics must never trigger another generation or hide the original failure. */
+      }
       const has = (...values) => codes.some((code) => values.includes(code));
       if (
         has(
