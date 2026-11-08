@@ -45,7 +45,9 @@ export function createRendererStatus({
       if (!response.ok)
         return fail(
           response.status,
-          typeof body.error === "string" ? body.error : "渲染服务检查失败。",
+          response.status === 403
+            ? `渲染服务未允许当前来源：${new URL(req.headers.origin).origin}。请在 Render 的 ALLOWED_ORIGINS 原有内容后，用英文逗号追加该来源，不带末尾斜杠；保留其他域名，保存后重新部署 Render。`
+            : typeof body.error === "string" ? body.error : "渲染服务检查失败。",
         );
       if (body.ok !== true) return fail(502, "渲染服务响应异常。");
       return res.status(200).json({ ok: true });

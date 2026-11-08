@@ -124,3 +124,9 @@ STUDIO_URL=https://your-preview.vercel.app npm run verify:preview
 若日志显示端口 10000 已启动，但 `/healthz` 超时，旧版服务缺少该公开路由。使用本分支修复后的提交，Render → 服务 → Settings → Health Check Path 填 `/healthz`，然后 Manual Deploy → Deploy latest commit。无需改 Dockerfile Path `renderer/Dockerfile` 或根目录 Build Context `.`，无需更换密钥；`RENDERER_API_KEY` 仍需至少 24 字符，`ALLOWED_ORIGINS` 仍需有效 Preview 来源。
 
 免费 0.1 CPU / 512MB 的健康检查不应执行编码。启动只加载 Python 标准库及本地模块，FFmpeg 仅在任务时运行；通过健康检查不代表这一级资源能可靠完成 1080×1920 编码。该资源等级未通过真实 Render 编码验收，可能超时或内存不足；先验证启动与连接，再由所有者决定是否升级资源，不自动购买。
+
+## 连接检查提示来源未允许
+
+`/healthz` 成功不验证域名白名单。连接检查返回 403 时，网站会显示本次请求的准确来源；由所有者核对它确实是自己的 Preview 后，在 Render → 服务 → Environment → `ALLOWED_ORIGINS` 的**原有值后**用英文逗号追加该来源，保留所有已有项。来源只包含协议和域名，不带末尾 `/`、路径或通配符。保存并重新部署 Render，再回到同一 Preview 点击连接检查。
+
+`render.yaml` 的 `ALLOWED_ORIGINS: sync: false` 表示值由部署者维护，仓库提交不会覆盖当前后台值。单次部署网址与固定分支别名是不同来源，需分别允许或始终使用已经允许的同一个网址。不要从未经确认的历史记录自动添加域名。

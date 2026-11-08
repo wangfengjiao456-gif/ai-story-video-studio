@@ -220,4 +220,7 @@ test("renderer readiness actually checks auth and origin, never claims ready on 
   })(req, r);
   assert.equal(r.code, 403);
   assert.match(r.body.error.message, /来源/);
+  assert.ok(r.body.error.message.includes(req.headers.origin));
+  assert.match(r.body.error.message, /原有内容后/);
+  assert.ok(!r.body.error.message.includes("private-render-key"));
 });
