@@ -1,3 +1,4 @@
+import {cleanRenderCheckpoint,readRenderCheckpoint,saveRenderCheckpoint,clearRenderCheckpoint} from "../video/renderCheckpoint.js";
 import MusicSettings from "./MusicSettings.jsx";
 import { mixKey, mixVideoAudio } from "../creation/audioMix.js";
 import { parseTimingDraft } from "../video/timingDraft.js";
@@ -14,6 +15,7 @@ import {
   cancelRender,
   jsonRequest,
   recoverVideoDownload,
+  resumeRenderJob,
   renderExpired,
 } from "../video/exportClient.js";
 import {
@@ -66,6 +68,20 @@ export default function VideoStudioPanel({
     [pendingDownload, setPendingDownload] = useState(null),
     [recoveringDownload, setRecoveringDownload] = useState(false),
     [clock, setClock] = useState(Date.now);
+  const [savedTask,setSavedTask]=useState(()=>{try{return readRenderCheckpoint(window.sessionStorage);}catch{return null;}});
+  const [checkpointWarning,setCheckpointWarning]=useState(()=>{try{readRenderCheckpoint(window.sessionStorage);return "";}catch{return "无法读取原任务入口；请保留当前标签页和项目备份，检查浏览器会话存储权限。";}});
+  const checkpointRef=useRef(savedTask);
+  function checkpoint(value){
+    let clean;
+    try{clean=cleanRenderCheckpoint(value);}catch{setCheckpointWarning("渲染服务返回的恢复凭证不完整；请保持页面并下载结果。");return;}
+    checkpointRef.current=clean;setSavedTask(clean);
+    try{saveRenderCheckpoint(window.sessionStorage,clean);setCheckpointWarning("");}
+    catch{setCheckpointWarning("此浏览器无法保存任务入口；请保持页面直到下载完成，不要刷新。项目数据不受影响。");}
+  }
+  function forgetTask(){
+    checkpointRef.current=null;setSavedTask(null);
+    try{clearRenderCheckpoint(window.sessionStorage);}catch{}
+  }
   const audio = useRef(null),
     inspector = useRef(null),
     startingInspector = useRef(false),
@@ -199,7 +215,7 @@ export default function VideoStudioPanel({
     () => () => {
       audio.current?.pause();
       inspector.current?.pause();
-      controller.current?.abort();
+      controller.current?.abort(new DOMException("Page left","PageExit"));
       recoveryController.current?.abort();
       alignmentContext.current = null;
       importEpoch.current++;
@@ -211,11 +227,16 @@ export default function VideoStudioPanel({
           "loadedmetadata",
           pendingSeek.current,
         );
-      if (busyRef.current) cancelRender(job.current);
+      if (busyRef.current && checkpointRef.current?.phase === "uploading") cancelRender(job.current);
       if (importedUrl.current) URL.revokeObjectURL(importedUrl.current);
     },
     [],
   );
+  useEffect(()=>{
+    const leave=()=>controller.current?.abort(new DOMException("Page left","PageExit"));
+    window.addEventListener("pagehide",leave);
+    return()=>window.removeEventListener("pagehide",leave);
+  },[]);
   useEffect(() => {
     pause();
     setTime(0);
@@ -279,7 +300,7 @@ export default function VideoStudioPanel({
       ready: !!timeline,
       playing,
       rendering: !!progress && progress.percent < 100,
-      pendingDownload: !!pendingDownload,
+      pendingDownload: !!pendingDownload || (!!savedTask && !result),
       timingDraftDirty: draftDirty,
     });
   }, [
@@ -288,6 +309,8 @@ export default function VideoStudioPanel({
     !!progress && progress.percent < 100,
     onPlaybackChange,
     !!pendingDownload,
+    !!savedTask,
+    !!result,
     draftDirty,
   ]);
   useEffect(() => {
@@ -679,7 +702,7 @@ export default function VideoStudioPanel({
     }
   }
   useEffect(() => {
-    if (!result && !pendingDownload) return;
+    if (!result && !pendingDownload && !savedTask) return;
     const tick = () => setClock(Date.now());
     const timer = setInterval(tick, 30000);
     window.addEventListener("pageshow", tick);
@@ -687,7 +710,7 @@ export default function VideoStudioPanel({
       clearInterval(timer);
       window.removeEventListener("pageshow", tick);
     };
-  }, [result, pendingDownload]);
+  }, [result, pendingDownload, savedTask]);
   async function restoreDownload() {
     if (!pendingDownload || recoveryLock.current || busyRef.current) return;
     recoveryLock.current = true;
@@ -718,8 +741,23 @@ export default function VideoStudioPanel({
       recoveryController.current = null;
     }
   }
+  async function restoreTask(){
+    if(!savedTask || recoveryLock.current || busyRef.current)return;
+    recoveryLock.current=true;setRecoveringDownload(true);setError("");
+    const request=new AbortController();recoveryController.current=request;job.current=savedTask.job;
+    try{
+      const output=await resumeRenderJob(savedTask,{signal:request.signal,onProgress:setProgress});
+      setResult(output);setPendingDownload(null);setExportFailed(false);
+      checkpoint({...savedTask,phase:"download"});
+      setProgress({percent:100,message:"原任务已恢复并验证下载，没有创建新渲染任务。"});
+    }catch(e){setProgress(null);if(e.name!=="AbortError")setError(e.message);}
+    finally{recoveryLock.current=false;setRecoveringDownload(false);recoveryController.current=null;}
+  }
   async function exportMp4() {
     if (!timeline || busyRef.current || recoveryLock.current) return;
+    if(pendingDownload || (savedTask && !result)){
+      setError("已有渲染或下载任务入口，请先恢复或明确放弃原任务，避免重复渲染。");return;
+    }
     if (draftDirty) {
       setError("有未应用的起止时间，请先应用或放弃修改，再导出。");
       return;
@@ -740,6 +778,7 @@ export default function VideoStudioPanel({
     onStart?.();
     busyRef.current = true;
     setExportFailed(false);
+    setResult(null);
     setError("");
     setProgress({ percent: 0, message: "正在创建渲染任务…" });
     const c = new AbortController();
@@ -778,6 +817,8 @@ export default function VideoStudioPanel({
       const output = await renderVideo(snapshot, makeFrame, {
         signal: c.signal,
         onProgress: setProgress,
+        preserveStartedJob:true,
+        onCheckpoint:checkpoint,
         onJob: (value) => (job.current = value),
       });
       setResult(output);
@@ -788,6 +829,8 @@ export default function VideoStudioPanel({
       });
     } catch (err) {
       if (err.recoverableVideo) setPendingDownload(err.recoverableVideo);
+      else if(err.recoverableJob)checkpoint(err.recoverableJob);
+      else forgetTask();
       setError(
         err.name === "AbortError"
           ? "导出已取消，项目与音频未删除。"
@@ -1170,6 +1213,8 @@ export default function VideoStudioPanel({
             disabled={
               busyRef.current ||
               recoveringDownload ||
+              !!pendingDownload ||
+              (!!savedTask && !result) ||
               !rendererReady ||
               draftDirty
             }
@@ -1191,7 +1236,9 @@ export default function VideoStudioPanel({
             <button
               onClick={() => {
                 controller.current?.abort();
+                recoveryController.current?.abort();
                 cancelRender(job.current);
+                forgetTask();
               }}
             >
               取消导出
@@ -1199,10 +1246,17 @@ export default function VideoStudioPanel({
           )}
         </div>
       )}
+      {checkpointWarning&&<p role="alert">{checkpointWarning}</p>}
+      {savedTask && !result && !pendingDownload && <section className="note" aria-label="恢复原渲染任务">
+        <p>发现本标签页的原渲染任务（导出时快照）。恢复只查询进度与文件，不上传、不启动新任务，也不调用付费AI。入口不包含API密钥，不进入项目JSON。</p>
+        <button disabled={recoveringDownload||busyRef.current||renderExpired(savedTask.job,clock)} onClick={restoreTask}>{recoveringDownload?"正在恢复原任务…":"恢复原任务进度与下载"}</button>
+        <button disabled={recoveringDownload||busyRef.current} onClick={()=>{if(window.confirm("放弃原任务入口并尝试取消该任务？项目与原始媒体不会删除。之后如需视频，必须重新确认导出。")){cancelRender(savedTask.job);forgetTask();setProgress(null);setError("");}}}>放弃原任务入口</button>
+        {renderExpired(savedTask.job,clock)&&<p>原任务已过期，请放弃入口后重新准备。</p>}
+      </section>}
       {pendingDownload && (
         <section className="note" role="status">
           <p>
-            视频已编码，但下载检查未完成。已完成文件没有删除，可仅恢复下载检查，不重新上传或渲染。请先恢复检查并下载；刷新或关闭页面会丢失本次任务入口。
+            视频已编码，但下载检查未完成。已完成文件没有删除，可仅恢复下载检查，不重新上传或渲染。请先恢复检查并下载；同一标签页刷新后可恢复入口；关闭标签页、服务重启或过期后不能保证恢复。
           </p>
           <button
             disabled={
@@ -1214,6 +1268,11 @@ export default function VideoStudioPanel({
           >
             {recoveringDownload ? "检查下载中…" : "恢复下载检查（不重新渲染）"}
           </button>
+          <button disabled={recoveringDownload || busyRef.current} onClick={()=>{
+            if(window.confirm("放弃这个下载入口？已完成文件会按服务期限清理；原项目和媒体保留。重新导出将创建新任务。")){
+              setPendingDownload(null);forgetTask();setProgress(null);setError("");
+            }
+          }}>放弃下载入口</button>
           {renderExpired(pendingDownload, clock) && (
             <p>此任务已过期，请重新导出。</p>
           )}

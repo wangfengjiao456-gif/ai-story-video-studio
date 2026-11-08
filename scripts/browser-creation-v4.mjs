@@ -1,3 +1,4 @@
+import {createAssistantHandler} from "../api/creative-assistant.js";
 // Real browser/offline audio/FFmpeg; upstream paid APIs are MOCKS.
 import assert from "node:assert/strict";
 import { readFileSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
@@ -12,8 +13,9 @@ import { createVideoJobHandler } from "../api/video-jobs.js";
 import { localPlan } from "../src/creation/planning.js";
 const base = process.env.STUDIO_URL || "http://127.0.0.1:6173",
   worker = process.env.RENDERER_BASE || "http://127.0.0.1:8199";
-mkdirSync("work/v4-regression", { recursive: true });
-rmSync("work/v4-regression/report.json", { force: true });
+const full=process.env.V42_FULL_WORKFLOW === "1", outDir=full?"work/v42-regression":"work/v4-regression";
+mkdirSync(outDir, { recursive: true });
+rmSync(`${outDir}/report.json`, { force: true });
 const p = JSON.parse(
   readFileSync("work/mp4-regression/sample-project.json", "utf8"),
 );
@@ -31,9 +33,11 @@ canvas
   .getContext("2d")
   .drawImage(await loadImage(p.scenes[0].imageRef.dataUrl), 0, 0, 1080, 1920);
 const jpeg = canvas.toBuffer("image/jpeg").toString("base64");
+const originalPictures=p.scenes.map(s=>s.imageRef.dataUrl);
+if(full){p.scenes.forEach(s=>s.imageRef=null);p.style="韩系温柔手绘绘本";}
 p.scenes[0].imageRef = null;
 p.scenes[1].imageRef = null;
-const music = "work/v4-regression/music.mp3";
+const music = `${outDir}/music.mp3`;
 assert.equal(
   spawnSync("ffmpeg", [
     "-v",
@@ -64,6 +68,7 @@ try {
   });
   page.setDefaultTimeout(30000);
   const errors = [];
+  if(full)page.on("dialog",dialog=>dialog.accept());
   page.on("pageerror", (e) => errors.push(e.message));
   await page.addInitScript((project) => {
     if (!localStorage.getItem("story-studio-v1"))
@@ -125,6 +130,15 @@ try {
     }),
   );
   const imagePrompts = [];
+  let assistantCalls=0,createdJobs=0,assistantClock=0;
+  page.on("request",r=>{if(r.url().endsWith("/api/video-jobs")&&r.method()==="POST")createdJobs++;});
+  const assistantHandler=createAssistantHandler({getKey:()=>"offline-mock",now:()=>assistantClock+=11000,createClient:()=>({responses:{create:async options=>{
+    assistantCalls++;
+    const topics=Array.from({length:10},(_,i)=>({title:i?`小步自律 ${i}`:"自律是一种自由",englishTitle:"Discipline Is Freedom",direction:"成长认知与自律",reason:"生活共鸣，适合慢速英语跟读",hook:"Freedom begins with one small choice."}));
+    const plan={...localPlan(p),title:"自律是一种自由",englishTitle:"Discipline Is Freedom"};
+    return {status:"completed",output_text:JSON.stringify(options.text.format.schema.properties.topics?{topics}:{pairs:p.scenes.map(({english,chinese})=>({english,chinese})),plan})};
+  }}})});
+  await page.route("**/api/creative-assistant",r=>handle(r,assistantHandler));
   let plans = 0,
     images = 0,
     voices = 0;
@@ -157,7 +171,9 @@ try {
             generate: async (options) => {
               imagePrompts.push(options.prompt);
               images++;
-              return { data: [{ b64_json: jpeg }] };
+              let generated=jpeg;
+              if(full){const data=JSON.parse(options.prompt.split("\n")[1]),index=Math.max(0,p.scenes.findIndex(s=>s.english===data.english));canvas.getContext("2d").drawImage(await loadImage(originalPictures[index]),0,0,1080,1920);generated=canvas.toBuffer("image/jpeg").toString("base64");}
+              return { data: [{ b64_json: generated }] };
             },
           },
         }),
@@ -186,6 +202,17 @@ try {
     ),
   );
   await page.goto(base);
+  if(full){
+    await page.getByRole("button",{name:/AI 创作助手/}).click();
+    await page.getByLabel("告诉助手你想做什么").fill("自律是一种自由");
+    await page.getByRole("button",{name:"生成话题",exact:true}).click();assert.equal(assistantCalls,0);
+    await page.getByRole("button",{name:"确认一次付费创作",exact:true}).click();
+    await page.getByRole("button",{name:"选择此话题写文章",exact:true}).first().click();assert.equal(assistantCalls,1);
+    await page.getByRole("button",{name:"确认一次付费创作",exact:true}).click();await page.getByLabel("英文 10",{exact:true}).waitFor();
+    await page.getByRole("button",{name:"制作视频",exact:true}).click();
+    const backup=page.waitForEvent("download");await page.getByRole("button",{name:"备份原项目并确认采用",exact:true}).click();await(await backup).saveAs(`${outDir}/before-adoption.json`);
+    await page.getByRole("button",{name:"审核并继续未完成的生成",exact:true}).waitFor();assert.equal(assistantCalls,2);
+  }else{
   await page.getByRole("button", { name: "AI 智能制作", exact: true }).click();
   await page.getByRole("button", { name: "免费本地规划", exact: true }).click();
   assert.equal(plans, 0);
@@ -205,11 +232,12 @@ try {
       JSON.parse(localStorage.getItem("story-studio-v1")).cover?.enabled ===
       true,
   );
+  }
   const planned = await page.evaluate(() =>
     JSON.parse(localStorage.getItem("story-studio-v1")),
   );
-  assert.equal(planned.english, p.english);
-  assert.equal(planned.chinese, p.chinese);
+  assert.equal(planned.english, full?p.scenes.map(s=>s.english).join("\n"):p.english);
+  assert.equal(planned.chinese, full?p.scenes.map(s=>s.chinese).join("\n"):p.chinese);
   assert.equal(planned.cover.duration, 3);
   assert.equal(planned.creation.beats.length, 10);
   await page
@@ -223,7 +251,7 @@ try {
   await page.waitForFunction(
     () => !document.querySelector(".video-studio").hidden,
   );
-  assert.equal(images, 3);
+  assert.equal(images, full?11:3);
   assert.equal(voices, 1); // Eight existing illustrations are preserved; cover and two missing scenes are generated.
   await page.getByRole("button", { name: "文章编辑", exact: true }).click();
   await page.getByRole("button", { name: "AI 智能制作", exact: true }).click();
@@ -236,9 +264,9 @@ try {
   await page.waitForFunction(
     () => !document.querySelector(".video-studio").hidden,
   );
-  assert.equal(images, 3);
+  assert.equal(images, full?11:3);
   assert.equal(voices, 1);
-  assert.equal(new Set(imagePrompts).size, 3);
+  assert.equal(new Set(imagePrompts).size, full?11:3);
   console.log(
     "PASS planning review, one confirmation, missing-only batch, original text retained",
   );
@@ -301,10 +329,10 @@ try {
       Array.from(new Uint8Array(await (await fetch(url)).arrayBuffer())),
     wavURL,
   );
-  writeFileSync("work/v4-regression/preview-mix.wav", Buffer.from(wav));
+  writeFileSync(`${outDir}/preview-mix.wav`, Buffer.from(wav));
   assert.equal(Buffer.from(wav).subarray(0, 4).toString(), "RIFF");
   writeFileSync(
-    "work/v4-regression/cover.png",
+    `${outDir}/cover.png`,
     Buffer.from(
       await page
         .locator(".full-video-frame canvas")
@@ -342,7 +370,7 @@ try {
     .waitFor({ timeout: 180000 });
   const downloading = page.waitForEvent("download");
   await page.getByRole("link", { name: "下载标准 MP4", exact: true }).click();
-  await (await downloading).saveAs("work/v4-regression/cover-music.mp4");
+  await (await downloading).saveAs(`${outDir}/cover-music.mp4`);
   const output = JSON.parse(
     spawnSync(
       "ffprobe",
@@ -353,7 +381,7 @@ try {
         "-show_format",
         "-of",
         "json",
-        "work/v4-regression/cover-music.mp4",
+        `${outDir}/cover-music.mp4`,
       ],
       { encoding: "utf8" },
     ).stdout,
@@ -372,7 +400,7 @@ try {
       "-v",
       "error",
       "-i",
-      "work/v4-regression/cover-music.mp4",
+      `${outDir}/cover-music.mp4`,
       "-frames:v",
       "1",
       "-f",
@@ -383,12 +411,12 @@ try {
     ],
     { maxBuffer: 16 * 1024 * 1024 },
   ).stdout;
-  writeFileSync("work/v4-regression/export-cover.png", rawFrame);
+  writeFileSync(`${outDir}/export-cover.png`, rawFrame);
   const expectedCanvas = createCanvas(1080, 1920),
     actualCanvas = createCanvas(1080, 1920);
   expectedCanvas
     .getContext("2d")
-    .drawImage(await loadImage("work/v4-regression/cover.png"), 0, 0);
+    .drawImage(await loadImage(`${outDir}/cover.png`), 0, 0);
   actualCanvas.getContext("2d").drawImage(await loadImage(rawFrame), 0, 0);
   const ePixels = expectedCanvas
       .getContext("2d")
@@ -403,7 +431,7 @@ try {
     "-v",
     "error",
     "-i",
-    "work/v4-regression/cover-music.mp4",
+    `${outDir}/cover-music.mp4`,
     "-t",
     "2",
     "-vn",
@@ -422,6 +450,12 @@ try {
     "BGM is audible during the silent title cover",
   );
   assert.equal(errors.length, 0);
+  if(full){
+    const count=createdJobs;await page.reload();await page.getByRole("button",{name:"视频预览与导出",exact:true}).click();
+    await page.getByRole("button",{name:"恢复原任务进度与下载",exact:true}).click();
+    await page.getByRole("link",{name:"下载标准 MP4",exact:true}).waitFor();assert.equal(createdJobs,count);
+    await page.getByRole("button",{name:"文章编辑",exact:true}).click();
+  }
   // Refresh: restore paid voice from origin-scoped IndexedDB without another API call.
   await page.waitForFunction(
     () =>
@@ -453,8 +487,8 @@ try {
     () => !document.querySelector(".video-studio").hidden,
   );
   assert.equal(voices, 1);
-  assert.equal(images, 3);
-  assert.equal(plans, 1);
+  assert.equal(images, full?11:3);
+  assert.equal(plans, full?0:1);
   console.log(
     "PASS refresh restores generated voice without repeat billing; music still requires its original file",
   );
@@ -467,11 +501,15 @@ try {
     );
   }
   writeFileSync(
-    "work/v4-regression/report.json",
+    `${outDir}/report.json`,
     JSON.stringify(
       {
         result: "PASS",
         source: "mock planning/image/TTS; real offline mixer, FFmpeg, download",
+        assistantCalls,
+        createdJobs,
+        fullTopicWorkflow:full,
+        paidProviders:"MOCK ONLY",
         plans,
         images,
         voices,

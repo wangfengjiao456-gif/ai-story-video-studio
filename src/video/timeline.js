@@ -57,7 +57,7 @@ export function buildVideoTimeline(
       throw Error("请先生成或导入当前英文文章的 MP3，并读取真实时长。");
     const t = articleTimeline(a.text, project.scenes, a);
     if (!t.ranges.length) throw Error("无法建立音频时轴。");
-    ranges = t.ranges;
+    ranges = t.speechRanges || t.ranges;
     audios = [a];
     precision = t.mode;
     reason = t.reason;
@@ -98,6 +98,7 @@ export function buildVideoTimeline(
     );
   if (savedCues && !validateCues(savedCues, project.scenes.length, duration))
     throw Error("起止时间无效：请确保不重叠且位于音频时长内。");
+  const preciseCues=savedCues || (!manual && precision==="aligned" ? ranges : null);
   const boundaries = manual || [
     0,
     ...ranges.slice(1).map((r) => r.start),
@@ -121,8 +122,8 @@ export function buildVideoTimeline(
         ? Math.ceil(duration * FPS) / FPS
         : Math.round(boundaries[index + 1] * FPS) / FPS,
   }));
-  if (savedCues)
-    ranges = savedCues.map((c, index) => ({
+  if (preciseCues)
+    ranges = preciseCues.map((c, index) => ({
       index,
       start: Math.round(c.start * FPS) / FPS,
       end: Math.round(c.end * FPS) / FPS,
@@ -153,7 +154,7 @@ export function buildVideoTimeline(
     }
   }
   // Fill silent intervals with the held image and no caption, shared by preview/export.
-  if (savedCues) {
+  if (preciseCues) {
     const filled = [];
     let cursor = 0;
     for (const f of frames) {

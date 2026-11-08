@@ -609,3 +609,11 @@ test("many retakes of one scene do not evict the current takes of other scenes",
     (119).toString(16).padStart(64, "0"),
   );
 });
+test('provider timestamps preserve actual speech pauses in full preview/export and replacing images never changes voice timing',()=>{
+ const project=initialProject();project.english='Go. Stop.';project.chinese='走。停。';project.scenes=splitArticle(project.english,project.chinese).map(s=>({...s,imageRef:ref}));
+ const chars=[...project.english],starts=chars.map((_,i)=>i<3?.5+i*.1: i===3?2:4+(i-4)*.1),ends=starts.map(t=>t+.08);
+ const asset={text:project.english,speed:.8,duration:7,blob:new Blob(['mock voice']),url:'blob:voice',alignment:{characters:chars,character_start_times_seconds:starts,character_end_times_seconds:ends}};
+ const a=buildVideoTimeline(project,{article:asset},.8);assert.equal(a.precision,'aligned');assert.equal(a.ranges[0].start,.5);assert.equal(a.ranges[1].start,4);
+ assert.equal(frameAt(a,0).plan.scene.english,'');assert.equal(frameAt(a,2).plan.scene.english,'');assert.equal(frameAt(a,4.1).plan.scene.chinese,'停。');assert.equal(frameAt(a,6).plan.scene.english,'');
+ const b=buildVideoTimeline({...project,scenes:project.scenes.map(s=>({...s,imageScale:1.2}))},{article:asset},.8);assert.deepEqual(b.ranges,a.ranges);assert.equal(b.audios[0],asset);assert.equal(b.duration,7);
+});

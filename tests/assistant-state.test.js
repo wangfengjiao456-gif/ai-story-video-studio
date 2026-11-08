@@ -145,3 +145,7 @@ test('large existing work never blocks unrelated generation, while explicit cont
   await act(async()=>{r=create(React.createElement(Component,{project:referenced,onProject:()=>true}));});await act(async()=>button(r,'生成完整内容').props.onClick());assert.equal(button(r,'确认一次付费创作'),undefined);assert.equal(calls,1);assert.match(JSON.stringify(r.toJSON()),/尚未发送请求/);
  } finally {globalThis.fetch=old;if(r)await act(async()=>r.unmount());}
 });
+test('a chosen topic opens article cost review without issuing a second paid request',async()=>{
+ const p=project();p.assistant.topics=Array.from({length:10},(_,i)=>({title:`话题${i}`,englishTitle:'',direction:'成长',reason:'适合跟读',hook:'走一步'}));let r,stored;
+ try{await act(async()=>{r=create(React.createElement(Component,{project:p,onProject:n=>{stored=n;return true;}}));});await act(async()=>button(r,'选择此话题写文章').props.onClick());assert.ok(button(r,'确认一次付费创作'));assert.equal(stored.assistant.mode,'article');assert.match(stored.assistant.request,/话题0/);}finally{if(r)await act(async()=>r.unmount());}
+});

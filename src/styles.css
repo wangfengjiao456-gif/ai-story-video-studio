@@ -1323,3 +1323,8 @@ input[type="range"] {
   border: 1px solid #dce3d3;
   border-radius: 5px;
 }
+/* iPad touch targets; preserve the existing desktop layout and palette. */
+@media (pointer: coarse) {
+  button, select { min-height: 44px; }
+  input:not([type="range"]):not([type="checkbox"]), textarea, select { font-size: 16px; }
+}

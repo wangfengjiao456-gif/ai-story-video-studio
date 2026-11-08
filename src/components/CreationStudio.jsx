@@ -27,8 +27,9 @@ export default function CreationStudio({
   ai,
   onVideo,
   onReference,
+  initialOpen = false,
 }) {
-  const [open, setOpen] = useState(false),
+  const [open, setOpen] = useState(initialOpen),
     [draft, setDraft] = useState(project.creationDraft?.plan || null),
     [source, setSource] = useState(project.creationDraft?.source || "local"),
     [error, setError] = useState(""),
@@ -163,12 +164,9 @@ export default function CreationStudio({
         );
       const p = input();
       const saved = onProject(applyPlan(p, draft, source), { saveNow: true });
+      if (saved === false) throw Error("规划保存失败，草稿已保留，未替换正式作品；请先备份JSON并检查浏览器存储。");
       setDraft(null);
-      setProgress(
-        saved === false
-          ? "规划已应用，但浏览器保存失败；请先导出JSON，再继续。"
-          : "规划已应用并保存；请核对内容，再确认付费生成。",
-      );
+      setProgress("规划已应用并保存；请核对内容，再确认付费生成。");
     } catch (e) {
       setError(e.message);
     }
@@ -184,6 +182,7 @@ export default function CreationStudio({
       if (!mounted.current) return;
       if (!value?.plan)
         throw Error("未找到当前内容对应的本机规划备份；可以免费本地规划。");
+      if (planningSignature(latest.current) !== signature) throw Error("恢复期间原文已变化，未写入旧规划；请返回原内容后恢复。");
       draftBase.current = signature;
       remember(validatePlan(value.plan, p.scenes.length), "ai");
       setError("已免费恢复规划草稿，请审核后应用。");

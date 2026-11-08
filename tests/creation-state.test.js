@@ -250,3 +250,11 @@ test("one batch confirmation queues cover and all missing scenes in order, and d
   }
 });
 test.after(() => rmSync(dir, { recursive: true, force: true }));
+test('failed immediate planning save retains editable draft and never claims applied',async()=>{
+ const p=project();let r;
+ try {
+  await act(async()=>{r=create(React.createElement(Component,{project:p,onProject:()=>false,generation:{},ai:{assets:{},speed:.8},onVideo(){}}));});
+  await act(async()=>button(r,'AI 智能制作').props.onClick());await act(async()=>button(r,'免费本地规划').props.onClick());await act(async()=>button(r,'确认内容并应用规划（免费）').props.onClick());
+  assert.ok(button(r,'确认内容并应用规划（免费）'));assert.match(JSON.stringify(r.toJSON()),/草稿已保留/);assert.doesNotMatch(JSON.stringify(r.toJSON()),/规划已应用并保存/);
+ }finally{if(r)await act(async()=>r.unmount());}
+});

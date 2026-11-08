@@ -1,5 +1,7 @@
 # AI Story Video Studio：iPad 操作指南
 
+V4.2最新任务恢复、使用与部署步骤见 [V4_2_GUIDE.md](V4_2_GUIDE.md)，功能状态以 [审查清单](V4_2_AUDIT.md) 为准。
+
 V4.1 AI 创作助手增量操作及 Preview 环境变量说明见 [V4_1_GUIDE.md](V4_1_GUIDE.md)；原有制作与Render步骤保持适用。
 
 **V4 最新操作与部署请看 [V4_GUIDE.md](V4_GUIDE.md)**；下文保留 V3.1 历史操作，不表示 V4 Preview 与旧网址共享存档。
