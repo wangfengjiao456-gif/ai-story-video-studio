@@ -7,7 +7,7 @@ services:
     plan: standard
     dockerfilePath: ./renderer/Dockerfile
     dockerContext: .
-    healthCheckPath: /health
+    healthCheckPath: /healthz
     autoDeploy: false
     envVars:
       - key: RENDERER_API_KEY

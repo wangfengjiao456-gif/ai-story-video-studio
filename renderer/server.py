@@ -129,6 +129,8 @@ class Handler(BaseHTTPRequestHandler):
         finally:UPLOADS.release()
     def do_HEAD(self):self.do_GET()
     def do_GET(self):
+        # Render liveness: never require credentials or run media/disk checks here.
+        if urlparse(self.path).path=='/healthz':return self.json(200,{'ok':True})
         if self.path=='/health':
             ok=health();return self.json(200 if ok else 503,{'ok':ok,'version':2})
         id,j,action=self.job()
@@ -176,9 +178,12 @@ class Handler(BaseHTTPRequestHandler):
         if not j.get('process'):shutil.rmtree(ROOT/id,ignore_errors=True)
         return self.json(200,{'ok':True})
 
+def create_server():
+    return ThreadingHTTPServer(('0.0.0.0',int(os.environ.get('PORT','8000'))),Handler)
+
 if __name__=='__main__':
     if len(KEY)<24 or not ORIGINS:raise SystemExit('Configure RENDERER_API_KEY (24+ chars) and ALLOWED_ORIGINS before starting.')
     cleanup(orphaned=True)
     stop=threading.Event();threading.Thread(target=janitor,args=(stop,),daemon=True).start()
-    try:ThreadingHTTPServer(('0.0.0.0',int(os.environ.get('PORT','8000'))),Handler).serve_forever()
+    try:create_server().serve_forever()
     finally:stop.set()

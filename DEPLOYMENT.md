@@ -8,7 +8,7 @@ Vercel 只运行前端、密钥代理和小型 API；FFmpeg 在独立 Docker 服
 
 Blueprint 提示时填写 `ALLOWED_ORIGINS`：当前 Vercel Preview **完整来源**，例如 `https://your-preview.vercel.app`，无末尾斜杠；多个来源用逗号分隔。建议先在 Vercel 绑定固定 Preview 域名，否则每次 Preview 域名变化需要更新。不要写 `*`。
 
-`RENDERER_API_KEY` 由 Render 自动生成。在 Render 环境变量页复制此值，仅粘贴至 Vercel 服务端环境变量。记录服务 HTTPS 地址，例如 `https://story-studio-renderer-xxxx.onrender.com`。如果已有旧 worker，请重新构建并部署本分支最新提交，旧版本没有 `/check` 接口，不能通过连接验证。`/health` 返回 `{"ok":true}` 表示进程已启动。
+`RENDERER_API_KEY` 由 Render 自动生成。在 Render 环境变量页复制此值，仅粘贴至 Vercel 服务端环境变量。记录服务 HTTPS 地址，例如 `https://story-studio-renderer-xxxx.onrender.com`。如果已有旧 worker，请重新构建并部署本分支最新提交，旧版本没有 `/check` 接口，不能通过连接验证。Render 的 **Health Check Path 请填写 `/healthz`**。它无需鉴权，直接返回 HTTP 200 和 `{"ok":true}`，不启动 FFmpeg、不查询磁盘；旧 `/health` 保留为工具/磁盘就绪检查，网站 `/check` 仍验证密钥、来源和就绪状态。服务监听 `0.0.0.0`，优先读取 Render 注入的 `PORT`（例如 10000）；Docker 的 EXPOSE 8000 仅是元数据，不限制运行端口。
 
 其他 Docker 主机可执行：
 
@@ -118,3 +118,9 @@ STUDIO_URL=https://your-preview.vercel.app npm run verify:preview
 完整模块核对、测试证据边界和待用户事项见 [RELEASE_AUDIT.md](RELEASE_AUDIT.md)。状态为“等待用户授权和真实验收”。本轮新增原子时间草稿：应用前不能导出，错误不会覆盖已确认时轴；微调后须应用并再次保存。worker 最多额外保留十条失败记录，不影响正在运行的任务。
 
 请保持 Preview 的 Deployment Protection，仅向可信使用者授权；同源请求校验不等于登录/付费额度控制。不要为方便验收将付费 API 公开到无保护网站。Production 放行仍需实际 Render/Vercel 连接及实体 iPad 验收。
+
+## Render 首次部署健康检查超时
+
+若日志显示端口 10000 已启动，但 `/healthz` 超时，旧版服务缺少该公开路由。使用本分支修复后的提交，Render → 服务 → Settings → Health Check Path 填 `/healthz`，然后 Manual Deploy → Deploy latest commit。无需改 Dockerfile Path `renderer/Dockerfile` 或根目录 Build Context `.`，无需更换密钥；`RENDERER_API_KEY` 仍需至少 24 字符，`ALLOWED_ORIGINS` 仍需有效 Preview 来源。
+
+免费 0.1 CPU / 512MB 的健康检查不应执行编码。启动只加载 Python 标准库及本地模块，FFmpeg 仅在任务时运行；通过健康检查不代表这一级资源能可靠完成 1080×1920 编码。该资源等级未通过真实 Render 编码验收，可能超时或内存不足；先验证启动与连接，再由所有者决定是否升级资源，不自动购买。

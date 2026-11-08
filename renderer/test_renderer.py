@@ -10,6 +10,31 @@ def png(path,color=(60,110,75)):
     path.write_bytes(b'\x89PNG\r\n\x1a\n'+chunk(b'IHDR',struct.pack('>IIBBBBB',1080,1920,8,2,0,0,0))+chunk(b'IDAT',zlib.compress(raw))+chunk(b'IEND',b''))
 
 class RendererTests(unittest.TestCase):
+    def test_healthz_is_public_fast_and_uses_render_port(self):
+        import server
+        # Port 0 lets the OS reserve an isolated test port; production uses Render's PORT.
+        with patch.dict(os.environ,{'PORT':'0'}), patch.object(server,'health',side_effect=AssertionError('liveness must not inspect FFmpeg or disk')):
+            httpd=server.create_server()
+            self.assertEqual(httpd.server_address[0],'0.0.0.0')
+            self.assertGreater(httpd.server_address[1],0)
+            thread=threading.Thread(target=httpd.serve_forever,daemon=True);thread.start()
+            try:
+                for method in ['GET','HEAD']:
+                    req=urllib.request.Request(f'http://127.0.0.1:{httpd.server_port}/healthz',method=method,headers={'Origin':'https://not-allowed.test'})
+                    with urllib.request.urlopen(req,timeout=2) as response:
+                        self.assertEqual(response.status,200)
+                        self.assertEqual(response.headers['Content-Type'],'application/json; charset=utf-8')
+                        if method=='GET':self.assertEqual(json.load(response),{'ok':True})
+                        else:self.assertEqual(response.read(),b'')
+                with self.assertRaises(urllib.error.HTTPError) as denied:
+                    urllib.request.urlopen(f'http://127.0.0.1:{httpd.server_port}/jobs/'+'a'*32,timeout=2)
+                self.assertEqual(denied.exception.code,401)
+            finally:
+                httpd.shutdown();httpd.server_close();thread.join(timeout=2)
+        with patch.dict(os.environ,{'PORT':'10000'}), patch.object(server,'ThreadingHTTPServer') as factory:
+            server.create_server()
+            factory.assert_called_once_with(('0.0.0.0',10000),server.Handler)
+
     def test_ffmpeg_progress_accepts_initial_na(self):
         for line in ['out_time_us=N/A\n','out_time_us=nan\n','out_time_us=-1','progress=continue']:
             self.assertIsNone(progress_value(line,10))
@@ -107,7 +132,7 @@ class RendererTests(unittest.TestCase):
                 return urllib.request.urlopen(req,timeout=40)
             try:
                 for _ in range(100):
-                    try:request('/health').close();break
+                    try:request('/healthz').close();break
                     except (OSError,urllib.error.URLError):time.sleep(.05)
                 with self.assertRaises(urllib.error.HTTPError) as denied:request('/jobs','POST',json.dumps(manifest).encode(),{'Content-Type':'application/json'})
                 self.assertEqual(denied.exception.code,401)

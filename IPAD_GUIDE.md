@@ -39,7 +39,7 @@
 8. 你确认费用后，点击 **Deploy Blueprint**。等待服务显示已运行。
 9. 打开服务页面，记下顶部的 HTTPS 服务地址，例如 `https://你的服务名.onrender.com`。这里只是示例，必须使用 Render 实际分配的地址。
 10. 进入该服务 **Environment**，找到 **RENDERER_API_KEY**，本人显示/复制其值，下一节粘贴到 Vercel。不要发到聊天、GitHub 评论或故事编辑框。
-11. 在服务地址后加 `/health` 打开。如果看到 `"ok":true`，表示进程启动；还需完成网站内的连接检查，才算密钥和来源都正确。
+11. 在 Render **Settings → Health Check Path** 填 `/healthz`；在服务地址后加 `/healthz` 打开。如果看到 `"ok":true`，表示进程启动；还需完成网站内的连接检查，才算密钥和来源都正确。
 
 如果你已经建过此服务：打开服务的 **Settings** 检查 Git 分支，再用 **Manual Deploy → Deploy latest commit** 更新。不需要重建另一个收费服务。
 
