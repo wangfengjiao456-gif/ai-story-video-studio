@@ -33,7 +33,7 @@ export function splitArticle(english, chinese) {
     id: uid(),
     english: en[i] || "",
     chinese: zh[i] || "",
-    description: `分镜 ${i + 1}：请填写场景、人物动作与镜头描述`,
+    description: "",
     duration: 5,
   }));
 }

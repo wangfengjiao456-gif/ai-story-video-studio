@@ -42,7 +42,11 @@ import SceneImageSettings from "./components/SceneImageSettings.jsx";
 import AIVoicePanel from "./components/AIVoicePanel.jsx";
 import useVoiceStudio from "./hooks/useVoiceStudio.js";
 import { isFresh } from "./services/aiVoice.js";
-import { loadProject, saveProject } from "./services/projectStorage.js";
+import {
+  loadProject,
+  saveProject,
+  scheduleProjectSave,
+} from "./services/projectStorage.js";
 const tabs = [
   ["article", "文章编辑", BookOpen],
   ["scenes", "故事分镜", Clapperboard],
@@ -79,6 +83,7 @@ export default function App() {
     [voices, setVoices] = useState([]),
     [voiceName, setVoiceName] = useState("");
   const [lastSavedProject, setLastSavedProject] = useState(p);
+  const [saveStatus, setSaveStatus] = useState("");
   const [recovery, setRecovery] = useState(startup.recovery ? startup : null);
   const [backups, setBackups] = useState(startup.backups || []);
   const [blocked, setBlocked] = useState(
@@ -192,17 +197,34 @@ export default function App() {
     try {
       const result = saveProject(localStorage, p);
       setLastSavedProject(p);
+      setSaveStatus("已保存到当前网址；MP3 需单独备份。");
       setBackups(result.backups);
       setRecovery(null);
       setMessage(
         result.archived
           ? "项目已保存；原无效存档已保留在恢复备份中，可随时下载。"
-          : "项目已保存到当前浏览器，请定期导出 JSON 备份。",
+          : "项目已保存到当前网址的浏览器，包含提示词与图片；MP3 仅在当前页面，需单独备份。请定期导出 JSON。",
       );
     } catch (err) {
       setMessage(`保存失败：${err.message} 当前编辑内容和原有存档均已保留。`);
     }
   }
+  useEffect(() => {
+    if (blocked || recovery || p === lastSavedProject) return;
+    setSaveStatus("正在自动保存到当前网址…");
+    return scheduleProjectSave(() => window.localStorage, p, {
+      onSaved(result) {
+        setLastSavedProject(p);
+        setBackups(result.backups);
+        setSaveStatus("已自动保存到当前网址；MP3 需单独备份。");
+      },
+      onError(error) {
+        setSaveStatus(
+          `自动保存失败：${error.message} 当前修改仍在页面内，请先导出 JSON；原存档未覆盖。`,
+        );
+      },
+    });
+  }, [p, lastSavedProject, blocked, recovery]);
   useEffect(() => {
     if (
       p === lastSavedProject &&
@@ -235,7 +257,9 @@ export default function App() {
   function split() {
     if (
       p.scenes.length &&
-      !window.confirm("重新拆分会替换当前分镜，包括手动修改，是否继续？")
+      !window.confirm(
+        "重新拆分会替换当前分镜、画面提示词及图片，并使原时间轴失效。请先导出 JSON 备份。是否继续？",
+      )
     )
       return;
     stop();
@@ -378,6 +402,11 @@ export default function App() {
               <Download size={16} />
               <span>导出 JSON</span>
             </button>
+            {saveStatus && (
+              <span className="muted" role="status">
+                {saveStatus}
+              </span>
+            )}
             {p !== lastSavedProject && (
               <span className="muted" role="status">
                 有未保存更改
@@ -649,6 +678,7 @@ export default function App() {
                         />
                         <Field
                           label="画面描述 / 图片生成提示词"
+                          placeholder="请填写场景、人物动作与镜头描述；不会自动生成英文提示词"
                           value={s.description}
                           onChange={(description) =>
                             editScene(s.id, { description })

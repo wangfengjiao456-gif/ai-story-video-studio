@@ -130,3 +130,9 @@ STUDIO_URL=https://your-preview.vercel.app npm run verify:preview
 `/healthz` 成功不验证域名白名单。连接检查返回 403 时，网站会显示本次请求的准确来源；由所有者核对它确实是自己的 Preview 后，在 Render → 服务 → Environment → `ALLOWED_ORIGINS` 的**原有值后**用英文逗号追加该来源，保留所有已有项。来源只包含协议和域名，不带末尾 `/`、路径或通配符。保存并重新部署 Render，再回到同一 Preview 点击连接检查。
 
 `render.yaml` 的 `ALLOWED_ORIGINS: sync: false` 表示值由部署者维护，仓库提交不会覆盖当前后台值。单次部署网址与固定分支别名是不同来源，需分别允许或始终使用已经允许的同一个网址。不要从未经确认的历史记录自动添加域名。
+
+## 集中稳定性修复分支
+
+`fix/studio-v3-1-stability` 的修改见 [STABILITY_REVIEW.md](STABILITY_REVIEW.md)。连接检查/创建任务的上游超时为45秒，Vercel函数预算60秒；仍不自动重提任务。Render后台白名单仅做规范化，既有允许来源不会自动增加或删除；拒绝通配符与非来源路径。新分支Preview须在环境变量范围包含该分支，并在Render原有白名单追加实际新来源。不要改Production。
+
+图片安全诊断在 Vercel → 当前 Preview Deployment → Runtime Logs，过滤 `image_api_failure`，只含已知分类/上游状态/request ID，不含原始密钥、描述或参考图。SDK原始错误正文不记录，避免意外泄密。

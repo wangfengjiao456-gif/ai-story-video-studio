@@ -424,3 +424,34 @@ test("非OpenAI的部署平台429不冒充上游速率限制，前端不重试",
     assert.equal(calls, 1);
   }
 });
+
+test("安全日志保留上游状态及请求编号，丢弃密钥、原始错误与提示词", async () => {
+  const events = [];
+  const r = res();
+  await createImageHandler({
+    getKey: () => "private-server-key",
+    logError: (e) => events.push(e),
+    createClient: () => ({
+      images: {
+        generate: async () => {
+          throw Object.assign(Error("private-server-key full private prompt"), {
+            status: 429,
+            code: "rate_limit_exceeded",
+            requestID: "req_mock_123",
+            headers: new Headers({ authorization: "private-server-key" }),
+          });
+        },
+      },
+    }),
+  })(req(), r);
+  assert.equal(events.length, 1);
+  assert.deepEqual(events[0], {
+    provider: "openai",
+    operation: "generate",
+    status: 429,
+    code: "rate_limit_exceeded",
+    requestId: "req_mock_123",
+  });
+  assert.ok(!JSON.stringify([events, r]).includes("private-server-key"));
+  assert.ok(!JSON.stringify([events, r]).includes("full private prompt"));
+});

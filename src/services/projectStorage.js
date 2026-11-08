@@ -69,3 +69,25 @@ export function saveProject(storage, project) {
   storage.setItem(PROJECT_KEY, raw);
   return { raw, archived, backups };
 }
+
+// Same validation and recovery rules as explicit saving; cancellable before a new edit.
+export function scheduleProjectSave(
+  storage,
+  project,
+  { onSaved, onError, delayMs = 1200 } = {},
+) {
+  const timer = setTimeout(() => {
+    let result;
+    try {
+      result = saveProject(
+        typeof storage === "function" ? storage() : storage,
+        project,
+      );
+    } catch (error) {
+      onError?.(error);
+      return;
+    }
+    onSaved?.(result);
+  }, delayMs);
+  return () => clearTimeout(timer);
+}
