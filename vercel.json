@@ -20,6 +20,9 @@
     },
     "api/plan-story.js": {
       "maxDuration": 120
+    },
+    "api/creative-assistant.js": {
+      "maxDuration": 120
     }
   }
 }

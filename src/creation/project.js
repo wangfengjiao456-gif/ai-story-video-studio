@@ -1,3 +1,4 @@
+import { cleanAssistant } from "../assistant/schema.js";
 import { validatePlan, cleanPlan } from "./planSchema.js";
 import { validateImageRef, imageRecord } from "../services/images.js";
 export { SIGNATURE_STYLE, STYLE_PROMPT } from "./style.js";
@@ -30,6 +31,7 @@ export function coverScene(p) {
   };
 }
 export function validateCreation(p) {
+  if (p.assistant !== undefined) cleanAssistant(p.assistant);
   if (
     p.voiceRecords !== undefined &&
     (!Array.isArray(p.voiceRecords) ||
@@ -137,6 +139,7 @@ export function validateCreation(p) {
 }
 export function creationRecord(p) {
   return {
+    ...(p.assistant ? {assistant:cleanAssistant(p.assistant)} : {}),
     ...(p.voiceRecords
       ? {
           voiceRecords: p.voiceRecords.map((r) => ({

@@ -730,6 +730,12 @@ export default function VideoStudioPanel({
       );
       return;
     }
+    if (
+      project.assistant?.adopted &&
+      !window.confirm(
+        "将提交1个Render视频渲染任务。计算费用取决于你的Render服务方案；本次不会调用OpenAI或ElevenLabs。是否确认导出？",
+      )
+    ) return;
     pause();
     onStart?.();
     busyRef.current = true;
